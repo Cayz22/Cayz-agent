@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "caya-agent"
 version = "1.0.0"
 description = "具备持久化记忆、联网搜索、知识库检索（RAG）与多模型支持的企业级 Agent"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     # P3 安全修复：使用 ~= 约束（兼容版本），允许 patch 升级但锁定 minor 版本，
     # 平衡安全更新与可复现构建。版本约束与 requirements.lock 中实际锁定的版本对齐。
@@ -58,7 +58,7 @@ python_files = ["test_*.py"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 # 启用常用规则集
