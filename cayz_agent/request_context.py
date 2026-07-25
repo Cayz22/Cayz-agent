@@ -10,23 +10,21 @@ P3 请求上下文管理：基于 contextvars 的 request_id 注入。
 - 中间件 set_request_id() 后，下游 await 调用自动继承
 - 异常处理器、后台任务可通过 get_request_id() 读取（无则返回 None）
 """
+
 import contextvars
 import logging
 import uuid
-from typing import Optional
 
 # 全局 contextvar：每个请求独立持有 request_id
-_request_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
-    "request_id", default=None
-)
+_request_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("request_id", default=None)
 
 
-def set_request_id(request_id: Optional[str]) -> None:
+def set_request_id(request_id: str | None) -> None:
     """设置当前上下文的 request_id"""
     _request_id_var.set(request_id)
 
 
-def get_request_id() -> Optional[str]:
+def get_request_id() -> str | None:
     """获取当前上下文的 request_id（无则返回 None）"""
     return _request_id_var.get()
 

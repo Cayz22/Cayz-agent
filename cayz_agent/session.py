@@ -16,11 +16,11 @@
 P2 并发安全：所有写操作（touch / delete / cleanup）通过 threading.Lock 串行化，
 避免 SQLite "database is locked" 错误。
 """
+
 import logging
 import sqlite3
 import time
 from threading import Lock
-from typing import Optional
 
 from .config import get_settings
 
@@ -59,11 +59,12 @@ class SessionInfo:
 
     def to_dict(self) -> dict:
         import datetime as dt
+
         return {
             "thread_id": self.thread_id,
-            "last_updated": dt.datetime.fromtimestamp(
-                self.last_updated, tz=dt.timezone.utc
-            ).isoformat() if self.last_updated else None,
+            "last_updated": dt.datetime.fromtimestamp(self.last_updated, tz=dt.UTC).isoformat()
+            if self.last_updated
+            else None,
             "message_count": self.message_count,
         }
 
@@ -76,7 +77,7 @@ class SessionManager:
     同时维护 session_activity 表记录会话活跃时间，用于过期清理。
     """
 
-    def __init__(self, db_path: Optional[str] = None):
+    def __init__(self, db_path: str | None = None):
         settings = get_settings()
         self._db_path = db_path or settings.sqlite_checkpoint_path
         self._backend = settings.checkpoint_backend.lower()
@@ -111,8 +112,7 @@ class SessionManager:
                 pass  # 列已存在
             # P0 性能：为 session_activity 表建立索引，加速 owner 过滤与时间排序
             conn.execute(
-                f"CREATE INDEX IF NOT EXISTS idx_session_activity_owner "
-                f"ON {_SESSION_ACTIVITY_TABLE}(owner)"
+                f"CREATE INDEX IF NOT EXISTS idx_session_activity_owner " f"ON {_SESSION_ACTIVITY_TABLE}(owner)"
             )
             conn.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_session_activity_last_active "
@@ -142,10 +142,7 @@ class SessionManager:
         all_success = True
         for table in (_CHECKPOINTS_TABLE, _CHECKPOINT_BLOBS_TABLE):
             try:
-                conn.execute(
-                    f"CREATE INDEX IF NOT EXISTS idx_{table}_thread_id "
-                    f"ON {table}(thread_id)"
-                )
+                conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_thread_id " f"ON {table}(thread_id)")
             except sqlite3.OperationalError:
                 # 表可能尚未创建（首次启动未写入 checkpoint），跳过
                 all_success = False
@@ -163,7 +160,8 @@ class SessionManager:
                 logger.warning(
                     "LangGraph 表 %s 不存在（checkpoint_backend=%s）；会话管理功能将返回空结果，"
                     "首次写入 checkpoint 后会自动创建",
-                    expected, self._backend,
+                    expected,
+                    self._backend,
                 )
 
     def session_exists(self, thread_id: str) -> bool:
@@ -198,7 +196,7 @@ class SessionManager:
         finally:
             conn.close()
 
-    def touch_session(self, thread_id: str, owner: Optional[str] = None):
+    def touch_session(self, thread_id: str, owner: str | None = None):
         """
         更新会话活跃时间（应在每次对话调用时执行）
 
@@ -271,7 +269,7 @@ class SessionManager:
         self,
         limit: int = 100,
         offset: int = 0,
-        owner_filter: Optional[str] = None,
+        owner_filter: str | None = None,
     ) -> tuple[list[SessionInfo], int]:
         """
         列出会话，按最后活跃时间降序
@@ -304,9 +302,7 @@ class SessionManager:
                     (owner_filter,),
                 )
             else:
-                cursor.execute(
-                    f"SELECT COUNT(*) as cnt FROM {_SESSION_ACTIVITY_TABLE}"
-                )
+                cursor.execute(f"SELECT COUNT(*) as cnt FROM {_SESSION_ACTIVITY_TABLE}")
             total_row = cursor.fetchone()
             total = total_row["cnt"] if total_row else 0
 
@@ -338,24 +334,26 @@ class SessionManager:
 
             sessions = []
             for row in cursor.fetchall():
-                sessions.append(SessionInfo(
-                    thread_id=row["thread_id"],
-                    last_updated=row["last_active"],
-                    message_count=row["msg_count"],
-                ))
+                sessions.append(
+                    SessionInfo(
+                        thread_id=row["thread_id"],
+                        last_updated=row["last_active"],
+                        message_count=row["msg_count"],
+                    )
+                )
 
             return sessions, total
 
         except sqlite3.OperationalError as e:
             logger.warning("查询会话列表失败（表可能不存在）: %s", e)
             return [], 0
-        except Exception as e:
+        except Exception:
             logger.exception("列出会话时发生错误")
             return [], 0
         finally:
             conn.close()
 
-    def get_session(self, thread_id: str, owner_filter: Optional[str] = None) -> Optional[dict]:
+    def get_session(self, thread_id: str, owner_filter: str | None = None) -> dict | None:
         """
         获取指定会话详情
 
@@ -400,13 +398,13 @@ class SessionManager:
 
         except sqlite3.OperationalError:
             return None
-        except Exception as e:
+        except Exception:
             logger.exception("查询会话详情失败")
             return None
         finally:
             conn.close()
 
-    def delete_session(self, thread_id: str, owner_filter: Optional[str] = None) -> bool:
+    def delete_session(self, thread_id: str, owner_filter: str | None = None) -> bool:
         """
         删除指定会话的所有 checkpoint
 
@@ -458,7 +456,7 @@ class SessionManager:
             except sqlite3.OperationalError as e:
                 logger.warning("删除会话失败: %s", e)
                 return False
-            except Exception as e:
+            except Exception:
                 logger.exception("删除会话时发生错误")
                 return False
             finally:
@@ -497,12 +495,9 @@ class SessionManager:
 
                 deleted_count = 0
                 for tid in expired_ids:
-                    cursor.execute(
-                        f"DELETE FROM {_CHECKPOINTS_TABLE} WHERE thread_id = ?", (tid,))
-                    cursor.execute(
-                        f"DELETE FROM {_CHECKPOINT_BLOBS_TABLE} WHERE thread_id = ?", (tid,))
-                    cursor.execute(
-                        f"DELETE FROM {_SESSION_ACTIVITY_TABLE} WHERE thread_id = ?", (tid,))
+                    cursor.execute(f"DELETE FROM {_CHECKPOINTS_TABLE} WHERE thread_id = ?", (tid,))
+                    cursor.execute(f"DELETE FROM {_CHECKPOINT_BLOBS_TABLE} WHERE thread_id = ?", (tid,))
+                    cursor.execute(f"DELETE FROM {_SESSION_ACTIVITY_TABLE} WHERE thread_id = ?", (tid,))
                     deleted_count += 1
 
                 conn.commit()
@@ -512,7 +507,7 @@ class SessionManager:
             except sqlite3.OperationalError as e:
                 logger.warning("清理过期会话失败: %s", e)
                 return 0
-            except Exception as e:
+            except Exception:
                 logger.exception("清理过期会话时发生错误")
                 return 0
             finally:
@@ -520,7 +515,7 @@ class SessionManager:
 
 
 # ===== 单例 =====
-_session_manager: Optional[SessionManager] = None
+_session_manager: SessionManager | None = None
 # P1 修复：单例创建使用双重检查锁定，避免首批并发请求创建多实例
 # （多实例会创建多个 SQLite 连接，加剧写冲突，且 owner 数据分散）
 _session_manager_lock = Lock()

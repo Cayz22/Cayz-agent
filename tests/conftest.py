@@ -1,11 +1,11 @@
 """pytest 共享配置与 fixture（包安装后无需 sys.path 操作）"""
+
 import os
 import tempfile
 from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
-
 
 # ============================================================
 # 环境变量：测试前强制清空敏感字段，防止读到本地 .env
@@ -133,6 +133,7 @@ def mock_llm_response():
         def test_xxx(self, mock_llm_response):
             mock_llm.invoke.return_value = mock_llm_response(content="hello")
     """
+
     def _make(content: str = "", tool_calls=None):
         resp = MagicMock()
         resp.content = content

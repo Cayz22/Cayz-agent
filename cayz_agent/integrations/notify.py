@@ -9,10 +9,9 @@
 2. 将 URL 配置到 .env 的 WECOM_WEBHOOK_URL 中
 3. 调用 notifier.send_text() 或 notifier.send_markdown()
 """
-import json
+
 import logging
 import threading
-from typing import Optional
 
 import requests
 
@@ -25,7 +24,7 @@ logger = logging.getLogger(__name__)
 # P1 性能：模块级 requests.Session 复用 TCP 连接 + TLS 会话，
 # 避免每次 send 都新建连接（含 DNS 解析 + TCP 握手 + TLS 协商）
 # Session 线程安全（requests 文档明确说明），可被多线程并发使用
-_http_session: Optional[requests.Session] = None
+_http_session: requests.Session | None = None
 _http_session_lock = threading.Lock()
 
 
@@ -97,6 +96,7 @@ class WeChatNotifier:
         防止 API Key / 密码 / 手机号等敏感信息外发到企业微信群聊。
         """
         from ..sanitizers import sanitize_text
+
         if payload.get("msgtype") == "text" and "text" in payload:
             content = payload["text"].get("content", "")
             if content:
@@ -108,7 +108,7 @@ class WeChatNotifier:
         return payload
 
     @retry_on_error(max_attempts=2, min_wait=1.0, max_wait=4.0)
-    def send_text(self, content: str, mentioned_list: Optional[list[str]] = None) -> dict:
+    def send_text(self, content: str, mentioned_list: list[str] | None = None) -> dict:
         """
         发送文本消息
 
@@ -141,7 +141,7 @@ class WeChatNotifier:
 
 
 # 全局单例
-_notifier: Optional[WeChatNotifier] = None
+_notifier: WeChatNotifier | None = None
 
 
 def get_notifier() -> WeChatNotifier:

@@ -5,14 +5,15 @@
 
 不 mock 内部组件，但 mock 外部依赖（LLM API、Tavily、ChromaDB embedding）。
 """
-from unittest.mock import patch, MagicMock
+
+from unittest.mock import MagicMock, patch
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 from cayz_agent.graph import create_graph
 from cayz_agent.sanitizers import sanitize_text
-from cayz_agent.validators import validate_user_input, InputValidationError
+from cayz_agent.validators import InputValidationError, validate_user_input
 
 
 @pytest.fixture
@@ -55,7 +56,7 @@ class TestEndToEndHappyPath:
 
         # 第二轮（同一 thread_id）
         mock_llm.invoke.return_value = AIMessage(content="你刚才说了你好")
-        result = agent_app.invoke(
+        agent_app.invoke(
             {"messages": [HumanMessage(content="我刚才说了什么")]},
             config={"configurable": {"thread_id": "e2e-2"}},
         )
@@ -109,9 +110,7 @@ class TestEndToEndSanitization:
 
     def test_api_key_in_reply_masked(self, agent_app, mock_llm):
         """回复中的 API Key 应被脱敏"""
-        mock_llm.invoke.return_value = AIMessage(
-            content="你的密钥是 sk-abcdefghijklmnopqrst"
-        )
+        mock_llm.invoke.return_value = AIMessage(content="你的密钥是 sk-abcdefghijklmnopqrst")
 
         result = agent_app.invoke(
             {"messages": [HumanMessage(content="告诉我密钥")]},
@@ -124,9 +123,7 @@ class TestEndToEndSanitization:
 
     def test_aws_key_in_reply_masked(self, agent_app, mock_llm):
         """回复中的 AWS 密钥应被脱敏"""
-        mock_llm.invoke.return_value = AIMessage(
-            content="AKIAIOSFODNN7EXAMPLE 是 AWS Access Key"
-        )
+        mock_llm.invoke.return_value = AIMessage(content="AKIAIOSFODNN7EXAMPLE 是 AWS Access Key")
 
         result = agent_app.invoke(
             {"messages": [HumanMessage(content="aws key")]},
@@ -148,12 +145,14 @@ class TestEndToEndToolCall:
         # 第一次调用：Agent 决定调用 get_current_time
         first_response = AIMessage(
             content="",
-            tool_calls=[{
-                "name": "get_current_time",
-                "args": {},
-                "id": "call-1",
-                "type": "tool_call",
-            }],
+            tool_calls=[
+                {
+                    "name": "get_current_time",
+                    "args": {},
+                    "id": "call-1",
+                    "type": "tool_call",
+                }
+            ],
         )
 
         # 第二次调用：Agent 基于工具结果生成最终回复
@@ -208,7 +207,7 @@ class TestEndToEndSessionIsolation:
 
         # thread B
         mock_llm.invoke.return_value = AIMessage(content="reply B")
-        result_b = agent_app.invoke(
+        agent_app.invoke(
             {"messages": [HumanMessage(content="msg B")]},
             config={"configurable": {"thread_id": "thread-B"}},
         )

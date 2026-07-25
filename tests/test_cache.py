@@ -1,18 +1,19 @@
 """
 cache 模块单元测试：验证 TTL+LRU 缓存与命中率监控
 """
+
 import time
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from cayz_agent.cache import (
     MonitoredCache,
-    get_llm_cache,
     get_embedding_cache,
+    get_llm_cache,
     get_rag_cache,
-    invalidate_rag_cache,
     invalidate_all_caches,
+    invalidate_rag_cache,
     reset_cache_singletons,
 )
 from cayz_agent.monitor import get_registry, record_cache_hit, record_cache_miss

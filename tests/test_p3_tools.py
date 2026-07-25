@@ -8,25 +8,26 @@ P3 新增工具测试：calculate / fetch_url / read_file / write_file / python_
 4. python_repl：基本执行、危险关键字拦截、内置模块访问
 5. 权限分级：scope 与工具分配正确
 """
+
 import os
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from cayz_agent.tools import (
+    _validate_workspace_path,
     calculate,
     fetch_url,
+    get_tools_for_scope,
+    python_repl,
     read_file,
     write_file,
-    python_repl,
-    get_tools_for_scope,
-    _validate_workspace_path,
 )
-
 
 # ============================================================
 # 1. calculate 工具测试
 # ============================================================
+
 
 class TestCalculate:
     """安全数学表达式求值"""
@@ -58,6 +59,7 @@ class TestCalculate:
     def test_constants_pi_e_tau(self):
         """数学常量 pi/e/tau"""
         import math
+
         assert calculate.invoke({"expression": "pi"}) == str(math.pi)
         assert calculate.invoke({"expression": "e"}) == str(math.e)
         assert calculate.invoke({"expression": "tau"}) == str(math.tau)
@@ -109,6 +111,7 @@ class TestCalculate:
 # 2. fetch_url 工具测试
 # ============================================================
 
+
 class TestFetchUrl:
     """网页内容抓取"""
 
@@ -149,6 +152,7 @@ class TestFetchUrl:
     def test_http_error_handled(self):
         """HTTP 错误应返回错误信息"""
         import httpx
+
         mock_resp = MagicMock()
         mock_resp.status_code = 404
         mock_resp.reason_phrase = "Not Found"
@@ -188,6 +192,7 @@ class TestFetchUrl:
 # 3. read_file / write_file 工具测试
 # ============================================================
 
+
 class TestFileTools:
     """文件读写工具"""
 
@@ -224,10 +229,7 @@ class TestFileTools:
         with patch("cayz_agent.tools.get_settings") as mock:
             mock.return_value.tools_workspace_dir = str(tmp_path)
 
-            result = write_file.invoke({
-                "file_path": "sub/dir/test.txt",
-                "content": "nested"
-            })
+            result = write_file.invoke({"file_path": "sub/dir/test.txt", "content": "nested"})
             assert "已写入" in result
             assert (tmp_path / "sub" / "dir" / "test.txt").exists()
 
@@ -270,6 +272,7 @@ class TestFileTools:
 # ============================================================
 # 4. python_repl 工具测试
 # ============================================================
+
 
 class TestPythonRepl:
     """受控 Python 执行"""
@@ -350,6 +353,7 @@ class TestPythonRepl:
 # ============================================================
 # 5. 权限分级测试
 # ============================================================
+
 
 class TestToolScopePermissions:
     """工具权限分级"""

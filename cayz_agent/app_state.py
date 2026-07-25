@@ -10,10 +10,11 @@ P3 应用状态管理：就绪标志 + 资源清理钩子。
 - 清理钩子 LIFO 执行：后注册的先清理（依赖关系：后注册的通常依赖先注册的资源）
 - 清理函数失败不阻塞其他清理：每个 hook 独立 try/except
 """
+
 import logging
 import threading
 import time
-from typing import Callable
+from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 

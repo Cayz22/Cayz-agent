@@ -1,8 +1,10 @@
 """
 sanitizers 模块单元测试：验证敏感信息脱敏与有害内容检测
 """
+
 import pytest
-from cayz_agent.sanitizers import sanitize_text, sanitize_exception, contains_harmful_content
+
+from cayz_agent.sanitizers import contains_harmful_content, sanitize_exception, sanitize_text
 
 
 class TestSanitizeText:
@@ -140,6 +142,7 @@ class TestP2ExtendedSanitizers:
     def test_jwt_masked(self):
         """JWT 令牌应被脱敏"""
         from cayz_agent.sanitizers import sanitize_text
+
         jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc123def456ghi789"
         result = sanitize_text(jwt)
         assert jwt not in result
@@ -148,6 +151,7 @@ class TestP2ExtendedSanitizers:
     def test_private_key_masked(self):
         """PEM 私钥块应被脱敏"""
         from cayz_agent.sanitizers import sanitize_text
+
         pem = (
             "-----BEGIN RSA PRIVATE KEY-----\n"
             "MIIEowIBAAKCAQEA1234567890abcdefghijklmnopqrstuvwxyz\n"
@@ -160,6 +164,7 @@ class TestP2ExtendedSanitizers:
     def test_connection_string_masked(self):
         """数据库连接串密码应被脱敏"""
         from cayz_agent.sanitizers import sanitize_text
+
         conn = "postgres://user:secretpass@localhost:5432/db"
         result = sanitize_text(conn)
         assert "secretpass" not in result
@@ -169,6 +174,7 @@ class TestP2ExtendedSanitizers:
     def test_phone_masked(self):
         """中国手机号应被脱敏"""
         from cayz_agent.sanitizers import sanitize_text
+
         text = "联系电话：13812345678"
         result = sanitize_text(text)
         assert "13812345678" not in result
@@ -177,6 +183,7 @@ class TestP2ExtendedSanitizers:
     def test_id_card_masked(self):
         """身份证号应被脱敏"""
         from cayz_agent.sanitizers import sanitize_text
+
         text = "身份证号：110101199001011234"
         result = sanitize_text(text)
         assert "110101199001011234" not in result
@@ -184,6 +191,7 @@ class TestP2ExtendedSanitizers:
     def test_email_partial_masked(self):
         """邮箱应部分脱敏（保留前3字符与域名）"""
         from cayz_agent.sanitizers import sanitize_text
+
         text = "联系邮箱：john.doe@example.com"
         result = sanitize_text(text)
         assert "john.doe@" not in result
@@ -192,6 +200,7 @@ class TestP2ExtendedSanitizers:
     def test_chinese_credential_masked(self):
         """中文密钥描述应被脱敏"""
         from cayz_agent.sanitizers import sanitize_text
+
         text = "密码: mySecretPass123"
         result = sanitize_text(text)
         assert "mySecretPass123" not in result
@@ -200,6 +209,7 @@ class TestP2ExtendedSanitizers:
     def test_aws_key_masked(self):
         """AWS AccessKey 应被脱敏"""
         from cayz_agent.sanitizers import sanitize_text
+
         text = "AWS Key: AKIAIOSFODNN7EXAMPLE"
         result = sanitize_text(text)
         assert "AKIAIOSFODNN7EXAMPLE" not in result
@@ -207,17 +217,20 @@ class TestP2ExtendedSanitizers:
     def test_detect_sensitive_info_empty(self):
         """空文本不检测到敏感信息"""
         from cayz_agent.sanitizers import detect_sensitive_info
+
         assert detect_sensitive_info("") == []
         assert detect_sensitive_info("普通文本无敏感信息") == []
 
     def test_detect_sensitive_info_phone(self):
         """检测手机号类型"""
         from cayz_agent.sanitizers import detect_sensitive_info
+
         assert "phone" in detect_sensitive_info("手机：13812345678")
 
     def test_detect_sensitive_info_multiple(self):
         """检测多种敏感信息类型"""
         from cayz_agent.sanitizers import detect_sensitive_info
+
         text = "电话 13812345678，邮箱 test@example.com，key=sk-abcdefghij1234567890"
         found = detect_sensitive_info(text)
         assert "phone" in found
@@ -231,12 +244,17 @@ class TestP2SanitizingLogFilter:
     def test_filter_masks_msg(self):
         """日志 record.msg 中的敏感信息应被脱敏"""
         import logging
+
         from cayz_agent.sanitizers import SanitizingLogFilter
 
         record = logging.LogRecord(
-            name="test", level=logging.INFO, pathname="", lineno=0,
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
             msg="API Key: sk-abcdefghij1234567890xyz",
-            args=None, exc_info=None,
+            args=None,
+            exc_info=None,
         )
         f = SanitizingLogFilter()
         assert f.filter(record) is True
@@ -246,10 +264,14 @@ class TestP2SanitizingLogFilter:
     def test_filter_masks_args(self):
         """日志 args 中的敏感信息应被脱敏"""
         import logging
+
         from cayz_agent.sanitizers import SanitizingLogFilter
 
         record = logging.LogRecord(
-            name="test", level=logging.INFO, pathname="", lineno=0,
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
             msg="请求头 %s",
             args=("Bearer abcdefghijklmnopqrstuvwxyz12",),
             exc_info=None,

@@ -18,48 +18,46 @@ FastAPI REST API 服务
 - 鉴权失败：HTTP 401（由中间件处理）
 - 限流：HTTP 429（由中间件处理）
 """
+
 import asyncio
 import json
 import logging
 import secrets
 import time
 from contextlib import asynccontextmanager
-from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, PlainTextResponse, JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
+from langchain_core.messages import AIMessageChunk, HumanMessage
 from pydantic import BaseModel, Field
 
-from langchain_core.messages import HumanMessage, AIMessageChunk
-
+from . import __version__, app_state
+from .alerts import check_alerts, start_alert_watcher, stop_alert_watcher
 from .config import get_settings, setup_logging
 from .graph import create_graph
-from .sanitizers import sanitize_text, sanitize_exception, detect_sensitive_info
+from .middleware import _SCOPE_LEVEL, setup_middleware
+from .monitor import (
+    export_prometheus,
+    get_metrics_summary,
+    record_knowledge_delete,
+    record_knowledge_upload,
+    record_request,
+    record_session_deleted,
+    record_session_end,
+    record_session_start,
+)
+from .sanitizers import detect_sensitive_info, sanitize_exception, sanitize_text
+from .session import get_session_manager
 from .validators import (
-    validate_user_input,
-    validate_knowledge_text,
-    validate_thread_id,
     MAX_BATCH_ITEMS,
     MAX_KNOWLEDGE_TEXT_LENGTH,
     InputValidationError,
+    validate_knowledge_text,
+    validate_thread_id,
+    validate_user_input,
 )
-from .monitor import (
-    record_request,
-    record_session_start,
-    record_session_end,
-    record_session_deleted,
-    record_knowledge_upload,
-    record_knowledge_delete,
-    export_prometheus,
-    get_metrics_summary,
-)
-from .alerts import check_alerts, start_alert_watcher, stop_alert_watcher
-from .middleware import setup_middleware, _SCOPE_LEVEL
-from .session import get_session_manager
-from . import __version__
-from . import app_state
 
 logger = logging.getLogger(__name__)
 
@@ -97,9 +95,13 @@ def _log_startup_report() -> None:
     logger.info("=" * 60)
 
     # ---- LLM 配置 ----
-    logger.info("[LLM] provider=%s, model=%s, temperature=%.2f, timeout=%.0fs",
-                settings.llm_provider, settings.model_name,
-                settings.temperature, settings.llm_request_timeout)
+    logger.info(
+        "[LLM] provider=%s, model=%s, temperature=%.2f, timeout=%.0fs",
+        settings.llm_provider,
+        settings.model_name,
+        settings.temperature,
+        settings.llm_request_timeout,
+    )
     key_map = {
         "openai": ("OPENAI_API_KEY", settings.openai_api_key),
         "zhipu": ("ZHIPU_API_KEY", settings.zhipu_api_key),
@@ -112,47 +114,78 @@ def _log_startup_report() -> None:
         logger.info("[LLM] %s=%s", key_name, _mask_secret(key_val))
 
     # ---- 持久化 ----
-    logger.info("[Persistence] backend=%s, sqlite_path=%s",
-                settings.checkpoint_backend, settings.sqlite_checkpoint_path)
+    logger.info(
+        "[Persistence] backend=%s, sqlite_path=%s", settings.checkpoint_backend, settings.sqlite_checkpoint_path
+    )
     if settings.checkpoint_backend == "memory":
         logger.warning("[Persistence] 使用 memory 后端，重启后会话丢失（生产环境应用 sqlite）")
 
     # ---- RAG ----
-    logger.info("[RAG] embedding_provider=%s, model=%s, chunk_size=%d, top_k=%d",
-                settings.embedding_provider, settings.embedding_model,
-                settings.chunk_size, settings.rag_top_k)
+    logger.info(
+        "[RAG] embedding_provider=%s, model=%s, chunk_size=%d, top_k=%d",
+        settings.embedding_provider,
+        settings.embedding_model,
+        settings.chunk_size,
+        settings.rag_top_k,
+    )
     logger.info("[RAG] chroma_persist_dir=%s", settings.chroma_persist_dir)
 
     # ---- 安全 ----
-    logger.info("[Security] auth_required=%s, api_key=%s, write_keys=%d, readonly_keys=%d",
-                settings.auth_required,
-                _mask_secret(settings.api_key) if settings.api_key else "<empty>",
-                len([k for k in settings.write_api_keys.split(",") if k.strip()]),
-                len([k for k in settings.readonly_api_keys.split(",") if k.strip()]))
-    logger.info("[Security] rate_limit=%d/min, write_rate_limit=%d/min, force_https=%s",
-                settings.rate_limit_per_minute, settings.rate_limit_write_per_minute,
-                settings.force_https)
-    logger.info("[Security] cors_origins=%s, trust_forwarded=%s, docs_enabled=%s",
-                settings.cors_allowed_origins, settings.trust_forwarded_headers,
-                settings.docs_enabled)
+    logger.info(
+        "[Security] auth_required=%s, api_key=%s, write_keys=%d, readonly_keys=%d",
+        settings.auth_required,
+        _mask_secret(settings.api_key) if settings.api_key else "<empty>",
+        len([k for k in settings.write_api_keys.split(",") if k.strip()]),
+        len([k for k in settings.readonly_api_keys.split(",") if k.strip()]),
+    )
+    logger.info(
+        "[Security] rate_limit=%d/min, write_rate_limit=%d/min, force_https=%s",
+        settings.rate_limit_per_minute,
+        settings.rate_limit_write_per_minute,
+        settings.force_https,
+    )
+    logger.info(
+        "[Security] cors_origins=%s, trust_forwarded=%s, docs_enabled=%s",
+        settings.cors_allowed_origins,
+        settings.trust_forwarded_headers,
+        settings.docs_enabled,
+    )
 
     # ---- 可观测性 ----
-    logger.info("[Observability] log_level=%s, log_format=%s, request_id=%s",
-                settings.log_level, settings.log_format, settings.request_id_enabled)
-    logger.info("[Observability] alert_watcher=%s, alert_interval=%ds",
-                settings.alert_watcher_enabled, settings.alert_watcher_interval)
+    logger.info(
+        "[Observability] log_level=%s, log_format=%s, request_id=%s",
+        settings.log_level,
+        settings.log_format,
+        settings.request_id_enabled,
+    )
+    logger.info(
+        "[Observability] alert_watcher=%s, alert_interval=%ds",
+        settings.alert_watcher_enabled,
+        settings.alert_watcher_interval,
+    )
 
     # ---- 缓存 ----
-    logger.info("[Cache] llm=%s(%d/%ds), embedding=%s(%d/%ds), rag=%s(%d/%ds)",
-                settings.cache_llm_enabled, settings.cache_llm_maxsize, settings.cache_llm_ttl,
-                settings.cache_embedding_enabled, settings.cache_embedding_maxsize, settings.cache_embedding_ttl,
-                settings.cache_rag_search_enabled, settings.cache_rag_maxsize, settings.cache_rag_ttl)
+    logger.info(
+        "[Cache] llm=%s(%d/%ds), embedding=%s(%d/%ds), rag=%s(%d/%ds)",
+        settings.cache_llm_enabled,
+        settings.cache_llm_maxsize,
+        settings.cache_llm_ttl,
+        settings.cache_embedding_enabled,
+        settings.cache_embedding_maxsize,
+        settings.cache_embedding_ttl,
+        settings.cache_rag_search_enabled,
+        settings.cache_rag_maxsize,
+        settings.cache_rag_ttl,
+    )
 
     # ---- 集成 ----
-    logger.info("[Integration] crm_mock=%s, wecom_webhook=%s, smtp=%s:%d",
-                settings.crm_use_mock,
-                "<configured>" if settings.wecom_webhook_url else "<empty>",
-                settings.smtp_host or "<empty>", settings.smtp_port)
+    logger.info(
+        "[Integration] crm_mock=%s, wecom_webhook=%s, smtp=%s:%d",
+        settings.crm_use_mock,
+        "<configured>" if settings.wecom_webhook_url else "<empty>",
+        settings.smtp_host or "<empty>",
+        settings.smtp_port,
+    )
 
     # ---- 依赖预检（不阻塞启动，仅 WARN）----
     logger.info("-" * 60)
@@ -195,7 +228,7 @@ async def lifespan(app: FastAPI):
     def _cleanup_agent_apps():
         global _agent_app, _agent_app_by_scope
         # 关闭每个 scope 的 graph 实例（含 SqliteSaver 连接）
-        for scope, graph in _agent_app_by_scope.items():
+        for scope, _graph in _agent_app_by_scope.items():
             try:
                 # LangGraph CompiledGraph 不直接暴露 checkpointer，但 SqliteSaver
                 # 在 GC 时会自动 close（__del__）。此处仅清除引用，让 GC 回收。
@@ -238,6 +271,7 @@ app = FastAPI(
 
 # ---- 全局异常处理（兜底端点 try/except 之外的未捕获异常）----
 
+
 @app.exception_handler(RequestValidationError)
 async def _validation_exception_handler(request: Request, exc: RequestValidationError):
     """Pydantic 请求体校验失败：统一为 422 + 标准 detail 格式。
@@ -246,15 +280,16 @@ async def _validation_exception_handler(request: Request, exc: RequestValidation
     与端点内 InputValidationError 抛出的 422 保持一致格式。
     """
     try:
-        from .monitor import record_request as _rec, get_metrics_summary  # noqa: F401
+        from .monitor import record_request as _rec  # noqa: F401
+
         _rec(request_type=request.url.path, success=False, latency=0.0)
     except Exception:
         pass
     # 把 errors 列表序列化为可读字符串
-    errors_str = "; ".join(
-        f"{'.'.join(str(p) for p in e.get('loc', []))}: {e.get('msg', '')}"
-        for e in exc.errors()
-    ) or "请求参数校验失败"
+    errors_str = (
+        "; ".join(f"{'.'.join(str(p) for p in e.get('loc', []))}: {e.get('msg', '')}" for e in exc.errors())
+        or "请求参数校验失败"
+    )
     return JSONResponse(
         status_code=422,
         content={"detail": f"输入无效: {errors_str}"},
@@ -290,6 +325,7 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
         content={"detail": f"内部错误: {sanitize_exception(exc)}"},
     )
 
+
 # ---- 中间件注册（FastAPI LIFO 执行：后注册的先执行）----
 # 注册顺序：鉴权/限流 → CORS
 # 这样 CORS 中间件在执行链最外层，所有响应（包括 401/429）都带 CORS 头，
@@ -302,9 +338,9 @@ _origins = [o.strip() for o in settings.cors_allowed_origins.split(",") if o.str
 _is_wildcard = _origins == ["*"]
 if _is_wildcard:
     import logging as _logging
+
     _logging.getLogger(__name__).warning(
-        "CORS 配置为 *（通配符），已强制关闭 credentials。"
-        "生产环境应通过 CORS_ALLOWED_ORIGINS 显式指定域名。"
+        "CORS 配置为 *（通配符），已强制关闭 credentials。" "生产环境应通过 CORS_ALLOWED_ORIGINS 显式指定域名。"
     )
 app.add_middleware(
     CORSMiddleware,
@@ -322,6 +358,7 @@ _agent_app_by_scope: dict = {}
 # P1 修复：单例创建使用双重检查锁定，避免首批并发请求创建多实例
 # （多实例会创建多个 SqliteSaver 连接，加剧 SQLite 写冲突）
 import threading as _threading
+
 _agent_app_lock = _threading.Lock()
 
 
@@ -355,6 +392,7 @@ def get_agent_app_for_scope(scope: str):
 # ---- P1 权限分级依赖 ----
 # require_scope("write") / require_scope("admin") 作为端点 Depends，
 # 校验当前请求的 scope 等级是否足够。readonly < write < admin。
+
 
 def _get_request_scope(request: Request) -> str:
     """从 request.state 读取 scope（由鉴权中间件写入）。
@@ -423,9 +461,10 @@ def _scan_knowledge_sensitive(text: str, source: str = ""):
 
 # ---- 请求/响应模型 ----
 
+
 class ChatRequest(BaseModel):
     message: str = Field(..., description="用户消息")
-    thread_id: Optional[str] = Field(None, description="会话 ID，不传则自动生成")
+    thread_id: str | None = Field(None, description="会话 ID，不传则自动生成")
 
 
 class ChatResponse(BaseModel):
@@ -435,10 +474,12 @@ class ChatResponse(BaseModel):
 
 # ---- 依赖检查 ----
 
+
 def _check_llm() -> dict:
     """检查 LLM provider 配置是否就绪"""
     try:
         from .llm import list_supported_providers
+
         provider = settings.llm_provider
         if provider not in list_supported_providers():
             return {"status": "unhealthy", "detail": f"未知 provider: {provider}"}
@@ -463,6 +504,7 @@ def _check_chromadb() -> dict:
     """检查 ChromaDB 是否可用"""
     try:
         from .rag import get_rag_manager
+
         manager = get_rag_manager()
         # count() 触发底层集合访问，验证可用性
         _ = manager.count()
@@ -477,6 +519,7 @@ def _check_checkpointer() -> dict:
         backend = settings.checkpoint_backend.lower()
         if backend == "sqlite":
             import sqlite3
+
             conn = sqlite3.connect(settings.sqlite_checkpoint_path)
             conn.close()
             return {"status": "healthy", "backend": "sqlite"}
@@ -486,6 +529,7 @@ def _check_checkpointer() -> dict:
 
 
 # ---- 端点 ----
+
 
 @app.get("/health")
 async def health():
@@ -636,7 +680,7 @@ async def chat_stream(req: ChatRequest, request: Request):
         try:
             raw = ""
             # P0 修复：使用 astream 异步生成器，避免同步 .stream() 阻塞事件循环
-            async for chunk, metadata in get_agent_app_for_scope(scope).astream(
+            async for chunk, _metadata in get_agent_app_for_scope(scope).astream(
                 {"messages": [HumanMessage(content=clean_message)]},
                 config=config,
                 stream_mode="messages",
@@ -662,6 +706,7 @@ async def chat_stream(req: ChatRequest, request: Request):
 
 # ---- 会话管理端点 ----
 # P1 IDOR 修复：非管理员仅能访问/删除自己的会话（按 client_id 归属过滤）
+
 
 @app.get("/sessions")
 async def list_sessions(limit: int = 100, offset: int = 0, request: Request = None):
@@ -709,6 +754,7 @@ async def delete_session(thread_id: str, request: Request = None):
 
 # ---- 知识库管理端点 ----
 
+
 class KnowledgeUploadRequest(BaseModel):
     text: str = Field(..., max_length=MAX_KNOWLEDGE_TEXT_LENGTH, description="要上传的文本内容")
     source: str = Field("api_upload", max_length=200, description="文档来源标识")
@@ -730,6 +776,7 @@ async def list_knowledge_sources():
     """列出知识库中所有文档来源"""
     start = time.perf_counter()
     from .rag import get_rag_manager
+
     manager = get_rag_manager()
     sources = manager.list_sources()
     record_request(request_type="knowledge_sources", success=True, latency=time.perf_counter() - start)
@@ -741,6 +788,7 @@ async def knowledge_count():
     """获取知识库文档片段总数"""
     start = time.perf_counter()
     from .rag import get_rag_manager
+
     manager = get_rag_manager()
     count = manager.count()
     record_request(request_type="knowledge_count", success=True, latency=time.perf_counter() - start)
@@ -752,6 +800,7 @@ async def knowledge_upload(req: KnowledgeUploadRequest, _: None = Depends(requir
     """上传文档到知识库（需 write 及以上权限）"""
     start = time.perf_counter()
     from .rag import get_rag_manager
+
     try:
         clean_text = validate_knowledge_text(req.text)
     except InputValidationError as e:
@@ -798,7 +847,7 @@ async def knowledge_batch_upload(req: KnowledgeBatchUploadRequest, _: None = Dep
     succeeded_items: list[dict] = []  # [{"source": str, "ids": list[str], "count": int}]
     total = 0
     batch_failed = False
-    batch_error: Optional[str] = None
+    batch_error: str | None = None
 
     for item in validated_items:
         try:
@@ -812,19 +861,23 @@ async def knowledge_batch_upload(req: KnowledgeBatchUploadRequest, _: None = Dep
             batch_error = sanitize_exception(e)
             logger.warning(
                 "批量上传中途失败 (source=%s): %s，开始回滚 %d 个已成功条目",
-                item["source"], batch_error, len(succeeded_items),
+                item["source"],
+                batch_error,
+                len(succeeded_items),
             )
             for succ in succeeded_items:
                 try:
                     rollback_count = manager.delete_by_ids(succ["ids"])
                     logger.info(
                         "回滚 source=%s，删除 %d 个本次新增片段（历史片段保留）",
-                        succ["source"], rollback_count,
+                        succ["source"],
+                        rollback_count,
                     )
                 except Exception as rollback_err:
                     logger.error(
                         "回滚 source=%s 失败: %s（需人工清理）",
-                        succ["source"], sanitize_exception(rollback_err),
+                        succ["source"],
+                        sanitize_exception(rollback_err),
                     )
             total = 0
             break
@@ -851,6 +904,7 @@ async def knowledge_update(req: KnowledgeUpdateRequest, _: None = Depends(requir
     """更新知识库文档（按 source 替换；需 write 及以上权限）"""
     start = time.perf_counter()
     from .rag import get_rag_manager
+
     try:
         clean_text = validate_knowledge_text(req.text)
     except InputValidationError as e:
@@ -873,6 +927,7 @@ async def knowledge_delete(source: str, _: None = Depends(require_scope("admin")
     """按来源删除知识库文档（需 admin 权限）"""
     start = time.perf_counter()
     from .rag import get_rag_manager
+
     manager = get_rag_manager()
     deleted = manager.delete_by_source(source)
     if deleted > 0:
@@ -890,15 +945,12 @@ def run():
       （仅当 > 0 时传给 uvicorn，0 表示不限制）
     """
     import uvicorn
+
     uvicorn.run(
         "cayz_agent.api:app",
         host=settings.api_host,
         port=settings.api_port,
         reload=False,
         timeout_keep_alive=settings.uvicorn_timeout_keep_alive,
-        **(
-            {"limit_concurrency": settings.uvicorn_limit_concurrency}
-            if settings.uvicorn_limit_concurrency > 0
-            else {}
-        ),
+        **({"limit_concurrency": settings.uvicorn_limit_concurrency} if settings.uvicorn_limit_concurrency > 0 else {}),
     )

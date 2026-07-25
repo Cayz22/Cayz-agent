@@ -4,16 +4,17 @@
 - validate_user_input: 验证用户输入（空、长度、注入防护）
 - validate_search_query: 验证搜索查询参数
 """
+
 import logging
 import re
 
 logger = logging.getLogger(__name__)
 
 # 限制参数
-MAX_INPUT_LENGTH = 2000       # 单次用户输入最大字符数
-MAX_SEARCH_QUERY_LENGTH = 500 # 搜索查询最大字符数
+MAX_INPUT_LENGTH = 2000  # 单次用户输入最大字符数
+MAX_SEARCH_QUERY_LENGTH = 500  # 搜索查询最大字符数
 MAX_KNOWLEDGE_TEXT_LENGTH = 100000  # 知识库文档最大字符数（比对话输入宽松）
-MAX_BATCH_ITEMS = 50          # 批量上传单次最大文档数
+MAX_BATCH_ITEMS = 50  # 批量上传单次最大文档数
 # M1 会话 ID 格式约束：仅允许字母/数字/连字符/下划线，长度 8-128
 # 防止换行符（日志注入）、超长字符串（DoS）、特殊字符（路径/SQL 元字符）
 MAX_THREAD_ID_LENGTH = 128
@@ -65,9 +66,7 @@ def validate_user_input(text: str) -> str:
     text = text.strip()
 
     if len(text) > MAX_INPUT_LENGTH:
-        raise InputValidationError(
-            f"输入过长（{len(text)} 字符），最大允许 {MAX_INPUT_LENGTH} 字符"
-        )
+        raise InputValidationError(f"输入过长（{len(text)} 字符），最大允许 {MAX_INPUT_LENGTH} 字符")
 
     for pattern in _INJECTION_PATTERNS:
         if pattern.search(text):
@@ -92,9 +91,7 @@ def validate_search_query(query: str) -> str:
     query = query.strip()
 
     if len(query) > MAX_SEARCH_QUERY_LENGTH:
-        raise InputValidationError(
-            f"搜索查询过长（{len(query)} 字符），最大允许 {MAX_SEARCH_QUERY_LENGTH} 字符"
-        )
+        raise InputValidationError(f"搜索查询过长（{len(query)} 字符），最大允许 {MAX_SEARCH_QUERY_LENGTH} 字符")
 
     return query
 
@@ -118,9 +115,7 @@ def validate_knowledge_text(text: str) -> str:
     text = text.strip()
 
     if len(text) > MAX_KNOWLEDGE_TEXT_LENGTH:
-        raise InputValidationError(
-            f"文档过长（{len(text)} 字符），最大允许 {MAX_KNOWLEDGE_TEXT_LENGTH} 字符"
-        )
+        raise InputValidationError(f"文档过长（{len(text)} 字符），最大允许 {MAX_KNOWLEDGE_TEXT_LENGTH} 字符")
 
     return text
 
@@ -143,18 +138,12 @@ def validate_thread_id(thread_id: str) -> str:
         raise InputValidationError("thread_id 不能为空")
 
     if len(thread_id) < MIN_THREAD_ID_LENGTH:
-        raise InputValidationError(
-            f"thread_id 过短（{len(thread_id)} 字符），最小 {MIN_THREAD_ID_LENGTH} 字符"
-        )
+        raise InputValidationError(f"thread_id 过短（{len(thread_id)} 字符），最小 {MIN_THREAD_ID_LENGTH} 字符")
 
     if len(thread_id) > MAX_THREAD_ID_LENGTH:
-        raise InputValidationError(
-            f"thread_id 过长（{len(thread_id)} 字符），最大 {MAX_THREAD_ID_LENGTH} 字符"
-        )
+        raise InputValidationError(f"thread_id 过长（{len(thread_id)} 字符），最大 {MAX_THREAD_ID_LENGTH} 字符")
 
     if not _THREAD_ID_PATTERN.match(thread_id):
-        raise InputValidationError(
-            "thread_id 格式非法：仅允许字母、数字、连字符、下划线"
-        )
+        raise InputValidationError("thread_id 格式非法：仅允许字母、数字、连字符、下划线")
 
     return thread_id

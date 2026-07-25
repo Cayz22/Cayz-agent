@@ -1,4 +1,5 @@
 """CLI 入口：交互式对话"""
+
 import logging
 
 from langchain_core.messages import HumanMessage
@@ -6,7 +7,7 @@ from langchain_core.messages import HumanMessage
 from . import __version__
 from .config import get_settings, setup_logging
 from .graph import create_graph
-from .sanitizers import sanitize_text, sanitize_exception
+from .sanitizers import sanitize_exception, sanitize_text
 
 logger = logging.getLogger(__name__)
 

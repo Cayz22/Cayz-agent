@@ -5,6 +5,7 @@
 - 提供 setup_logging() 统一配置标准 logging
 - P2-9：通过 pydantic validator 在启动时 fail-fast 检测无效配置组合
 """
+
 import logging
 import sys
 
@@ -248,17 +249,11 @@ class Settings(BaseSettings):
             # 开发模式不强制校验，允许空 key 启动
             return self
         if self.llm_provider in ("openai", "qwen") and not self.openai_api_key:
-            raise ValueError(
-                f"provider={self.llm_provider} 需配置 OPENAI_API_KEY（auth_required=True 时强制）"
-            )
+            raise ValueError(f"provider={self.llm_provider} 需配置 OPENAI_API_KEY（auth_required=True 时强制）")
         if self.llm_provider == "zhipu" and not (self.zhipu_api_key or self.openai_api_key):
-            raise ValueError(
-                "provider=zhipu 需配置 ZHIPU_API_KEY 或 OPENAI_API_KEY（auth_required=True 时强制）"
-            )
+            raise ValueError("provider=zhipu 需配置 ZHIPU_API_KEY 或 OPENAI_API_KEY（auth_required=True 时强制）")
         if self.llm_provider == "ernie" and not self.ernie_api_key:
-            raise ValueError(
-                "provider=ernie 需配置 ERNIE_API_KEY（auth_required=True 时强制）"
-            )
+            raise ValueError("provider=ernie 需配置 ERNIE_API_KEY（auth_required=True 时强制）")
         return self
 
 
@@ -315,9 +310,10 @@ def setup_logging(level: str = "INFO", log_format: str = "text") -> None:
     )
 
     # P2 日志脱敏：在 root logger 上安装过滤器，确保所有日志输出前自动脱敏
-    from .sanitizers import SanitizingLogFilter
     # P3 请求追踪：注入 request_id 到日志记录（JSON 格式时自动输出该字段）
     from .request_context import RequestIdLogFilter
+    from .sanitizers import SanitizingLogFilter
+
     root_logger = logging.getLogger()
     # 避免重复添加过滤器（setup_logging 可能被多次调用）
     existing_filters = root_logger.filters
@@ -350,10 +346,19 @@ class _JsonFormatter(logging.Formatter):
         }
 
         # 合并 extra 字段（非标准属性）
-        standard = set(vars(logging.LogRecord(
-            name="", level=0, pathname="", lineno=0,
-            msg="", args=(), exc_info=None,
-        )))
+        standard = set(
+            vars(
+                logging.LogRecord(
+                    name="",
+                    level=0,
+                    pathname="",
+                    lineno=0,
+                    msg="",
+                    args=(),
+                    exc_info=None,
+                )
+            )
+        )
         for key, value in vars(record).items():
             if key not in standard and not key.startswith("_"):
                 try:

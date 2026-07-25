@@ -6,9 +6,10 @@
 - 企业通知：企业微信 Webhook 消息推送
 - 邮件通知：SMTP 邮件发送
 """
+
 from .crm import CRMClient, get_crm_client
-from .notify import WeChatNotifier, get_notifier
 from .email_sender import EmailSender, get_email_sender
+from .notify import WeChatNotifier, get_notifier
 
 __all__ = [
     "CRMClient",

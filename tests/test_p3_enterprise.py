@@ -8,6 +8,7 @@ P3 企业级部署与运维功能测试。
 4. P3-4: 业务指标增强 - RAG 检索指标与会话时长 histogram
 5. P3-7: 启动配置自检报告 - 脱敏函数
 """
+
 import logging
 import time
 from unittest.mock import patch
@@ -15,13 +16,13 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-from cayz_agent.api import app, _mask_secret
 from cayz_agent import app_state
+from cayz_agent.api import _mask_secret, app
 from cayz_agent.request_context import (
-    set_request_id,
+    RequestIdLogFilter,
     get_request_id,
     new_request_id,
-    RequestIdLogFilter,
+    set_request_id,
 )
 
 
@@ -34,6 +35,7 @@ def client():
 # ============================================================
 # P3-1: X-Request-ID 中间件
 # ============================================================
+
 
 class TestRequestIdMiddleware:
     """测试请求追踪中间件"""
@@ -79,6 +81,7 @@ class TestRequestIdMiddleware:
 # ============================================================
 # P3-2: 优雅停机 - app_state 清理钩子
 # ============================================================
+
 
 class TestAppState:
     """测试应用状态管理"""
@@ -132,6 +135,7 @@ class TestAppState:
 # P3-3: 就绪探针分离
 # ============================================================
 
+
 class TestHealthReady:
     """测试 /health/ready 就绪探针"""
 
@@ -165,6 +169,7 @@ class TestHealthReady:
 # P3-4: 业务指标增强
 # ============================================================
 
+
 class TestBusinessMetrics:
     """测试 P3 新增业务指标"""
 
@@ -194,7 +199,7 @@ class TestBusinessMetrics:
 
     def test_session_duration_histogram(self):
         """record_session_end 应记录会话时长到 histogram"""
-        from cayz_agent.monitor import get_registry, record_session_start, record_session_end
+        from cayz_agent.monitor import get_registry, record_session_end, record_session_start
 
         reg = get_registry()
         reg.reset()
@@ -212,7 +217,7 @@ class TestBusinessMetrics:
 
     def test_session_end_without_duration_skips_histogram(self):
         """record_session_end 不传 duration 时不应记录 histogram"""
-        from cayz_agent.monitor import get_registry, record_session_start, record_session_end
+        from cayz_agent.monitor import get_registry, record_session_end, record_session_start
 
         reg = get_registry()
         reg.reset()
@@ -241,6 +246,7 @@ class TestBusinessMetrics:
 # ============================================================
 # P3-7: 启动配置自检 - 脱敏函数
 # ============================================================
+
 
 class TestMaskSecret:
     """测试敏感信息脱敏函数"""
@@ -274,6 +280,7 @@ class TestMaskSecret:
 # P3-1: request_context 模块
 # ============================================================
 
+
 class TestRequestContext:
     """测试请求上下文管理"""
 
@@ -302,8 +309,13 @@ class TestRequestContext:
         set_request_id("trace-abc-123")
         try:
             record = logging.LogRecord(
-                name="test", level=logging.INFO, pathname="", lineno=0,
-                msg="test message", args=(), exc_info=None,
+                name="test",
+                level=logging.INFO,
+                pathname="",
+                lineno=0,
+                msg="test message",
+                args=(),
+                exc_info=None,
             )
             filter_obj = RequestIdLogFilter()
             assert filter_obj.filter(record) is True
@@ -315,8 +327,13 @@ class TestRequestContext:
         """未设置 request_id 时不应注入字段"""
         set_request_id(None)
         record = logging.LogRecord(
-            name="test", level=logging.INFO, pathname="", lineno=0,
-            msg="test message", args=(), exc_info=None,
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="test message",
+            args=(),
+            exc_info=None,
         )
         filter_obj = RequestIdLogFilter()
         assert filter_obj.filter(record) is True

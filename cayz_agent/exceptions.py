@@ -36,11 +36,13 @@ class CayzAgentError(Exception):
 
 # ===== 配置 =====
 
+
 class ConfigError(CayzAgentError):
     """配置错误（缺失/无效/格式错误）"""
 
 
 # ===== LLM =====
+
 
 class LLMError(CayzAgentError):
     """LLM 调用相关错误"""
@@ -56,11 +58,13 @@ class LLMRateLimitError(LLMError):
 
 # ===== 工具 =====
 
+
 class ToolError(CayzAgentError):
     """工具执行错误"""
 
 
 # ===== RAG =====
+
 
 class RAGError(CayzAgentError):
     """RAG 知识库相关错误"""
@@ -79,6 +83,7 @@ class RAGIngestError(RAGError):
 
 
 # ===== 业务系统集成 =====
+
 
 class IntegrationError(CayzAgentError):
     """业务系统集成基类"""

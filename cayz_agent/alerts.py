@@ -7,21 +7,23 @@
 - 告警抑制（避免短时间内重复告警）
 - 后台定时 watcher 线程：避免依赖 /metrics 端点被访问才触发检查
 """
+
 import logging
 import threading
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Callable, Optional
 
-from .monitor import get_registry, get_metrics_summary
+from .monitor import get_metrics_summary
 
 logger = logging.getLogger(__name__)
 
 
 class AlertLevel(Enum):
     """告警级别"""
+
     WARNING = "WARNING"
     CRITICAL = "CRITICAL"
 
@@ -29,6 +31,7 @@ class AlertLevel(Enum):
 @dataclass
 class Alert:
     """告警记录"""
+
     name: str
     level: AlertLevel
     message: str
@@ -56,7 +59,7 @@ class AlertManager:
     def __init__(
         self,
         suppress_seconds: float = 300.0,
-        callback: Optional[Callable[[Alert], None]] = None,
+        callback: Callable[[Alert], None] | None = None,
     ):
         self.suppress_seconds = suppress_seconds
         self.callback = callback
@@ -158,7 +161,7 @@ class AlertManager:
         message: str,
         metric_value: float,
         threshold: float,
-    ) -> Optional[Alert]:
+    ) -> Alert | None:
         """检查抑制窗口，未抑制则创建告警（P1 线程安全：在锁内读写 _last_alert_time 与 _alerts）"""
         now = time.time()
         with self._lock:
@@ -207,7 +210,7 @@ class AlertManager:
             for a in recent
         ]
 
-    def clear_suppression(self, name: Optional[str] = None):
+    def clear_suppression(self, name: str | None = None):
         """清除抑制状态（用于测试或手动重置）"""
         with self._lock:
             if name:
@@ -222,7 +225,7 @@ class AlertManager:
 
 
 # 全局告警管理器实例
-_global_manager: Optional[AlertManager] = None
+_global_manager: AlertManager | None = None
 
 
 def get_alert_manager() -> AlertManager:
@@ -242,6 +245,7 @@ def check_alerts() -> list[Alert]:
 # 后台定时告警 watcher
 # ============================================================
 
+
 class AlertWatcher:
     """
     后台守护线程：每隔 interval 秒自动触发一次 check_alerts。
@@ -252,7 +256,7 @@ class AlertWatcher:
 
     def __init__(self, interval: float = 60.0):
         self.interval = interval
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._started = False
 
@@ -289,7 +293,7 @@ class AlertWatcher:
                 logger.exception("告警 watcher 执行失败，将继续重试")
 
 
-_watcher: Optional[AlertWatcher] = None
+_watcher: AlertWatcher | None = None
 
 
 def start_alert_watcher(interval: float = 60.0) -> AlertWatcher:

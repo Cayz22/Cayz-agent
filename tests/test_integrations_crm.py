@@ -1,6 +1,7 @@
 """
 CRM 集成模块单元测试
 """
+
 import pytest
 
 from cayz_agent.integrations.crm import CRMClient, Customer, Order

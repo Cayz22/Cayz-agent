@@ -3,21 +3,22 @@
 
 验证自定义异常的继承关系、属性、字符串表示。
 """
+
 import pytest
 
 from cayz_agent.exceptions import (
     CayzAgentError,
     ConfigError,
+    CRMError,
+    EmailError,
+    IntegrationError,
     LLMError,
     LLMRateLimitError,
-    ToolError,
-    RAGError,
-    RAGConnectionError,
-    RAGIngestError,
-    IntegrationError,
-    CRMError,
     NotifyError,
-    EmailError,
+    RAGConnectionError,
+    RAGError,
+    RAGIngestError,
+    ToolError,
 )
 
 
@@ -101,8 +102,14 @@ class TestExceptionHierarchy:
     def test_catch_by_base_class(self):
         """所有自定义异常应可被 CayzAgentError 捕获"""
         for exc_class in [
-            ConfigError, LLMError, ToolError, RAGError,
-            IntegrationError, CRMError, NotifyError, EmailError,
+            ConfigError,
+            LLMError,
+            ToolError,
+            RAGError,
+            IntegrationError,
+            CRMError,
+            NotifyError,
+            EmailError,
         ]:
             with pytest.raises(CayzAgentError):
                 raise exc_class("test")

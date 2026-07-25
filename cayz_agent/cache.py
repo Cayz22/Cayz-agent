@@ -9,9 +9,11 @@
 - 显式 disable 开关：可通过配置 zero-cost 关闭某类缓存
 - clear() 方法供知识库变更时主动失效 RAG 缓存
 """
+
 import logging
 import threading
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 from cachetools import TTLCache
 
@@ -50,7 +52,7 @@ class MonitoredCache:
         self._key_locks: dict = {}
         self._key_locks_lock = threading.Lock()
 
-    def get(self, key: Any) -> Optional[Any]:
+    def get(self, key: Any) -> Any | None:
         """获取缓存值。命中时记录指标，未命中或禁用时返回 None。"""
         if not self.enabled:
             record_cache_miss(self.name)
@@ -139,9 +141,9 @@ class MonitoredCache:
 # ============================================================
 # 全局缓存实例（按类型隔离）
 # ============================================================
-_llm_cache: Optional[MonitoredCache] = None
-_embedding_cache: Optional[MonitoredCache] = None
-_rag_cache: Optional[MonitoredCache] = None
+_llm_cache: MonitoredCache | None = None
+_embedding_cache: MonitoredCache | None = None
+_rag_cache: MonitoredCache | None = None
 _cache_lock = threading.Lock()
 
 
@@ -160,7 +162,9 @@ def get_llm_cache() -> MonitoredCache:
                 )
                 logger.info(
                     "LLM 缓存已初始化: enabled=%s, maxsize=%d, ttl=%ds",
-                    s.cache_llm_enabled, s.cache_llm_maxsize, s.cache_llm_ttl,
+                    s.cache_llm_enabled,
+                    s.cache_llm_maxsize,
+                    s.cache_llm_ttl,
                 )
     return _llm_cache
 
@@ -180,7 +184,9 @@ def get_embedding_cache() -> MonitoredCache:
                 )
                 logger.info(
                     "Embedding 缓存已初始化: enabled=%s, maxsize=%d, ttl=%ds",
-                    s.cache_embedding_enabled, s.cache_embedding_maxsize, s.cache_embedding_ttl,
+                    s.cache_embedding_enabled,
+                    s.cache_embedding_maxsize,
+                    s.cache_embedding_ttl,
                 )
     return _embedding_cache
 
@@ -200,7 +206,9 @@ def get_rag_cache() -> MonitoredCache:
                 )
                 logger.info(
                     "RAG 缓存已初始化: enabled=%s, maxsize=%d, ttl=%ds",
-                    s.cache_rag_search_enabled, s.cache_rag_maxsize, s.cache_rag_ttl,
+                    s.cache_rag_search_enabled,
+                    s.cache_rag_maxsize,
+                    s.cache_rag_ttl,
                 )
     return _rag_cache
 

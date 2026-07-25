@@ -6,7 +6,8 @@ __main__ 模块单元测试：验证 CLI 交互入口
 - 正常输入应调用 graph.invoke 并打印脱敏后的回复
 - 异常应被捕获并打印脱敏错误信息
 """
-from unittest.mock import patch, MagicMock
+
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -19,6 +20,7 @@ class TestMain:
     def _import_main(self):
         """动态导入 main 函数，避免模块级副作用"""
         from cayz_agent.__main__ import main
+
         return main
 
     def test_exit_command_terminates_loop(self):
@@ -26,11 +28,13 @@ class TestMain:
         main = self._import_main()
 
         mock_app = MagicMock()
-        with patch("cayz_agent.__main__.get_settings") as mock_settings, \
-             patch("cayz_agent.__main__.setup_logging"), \
-             patch("cayz_agent.__main__.create_graph", return_value=mock_app), \
-             patch("builtins.input", return_value="exit"), \
-             patch("builtins.print") as mock_print:
+        with (
+            patch("cayz_agent.__main__.get_settings"),
+            patch("cayz_agent.__main__.setup_logging"),
+            patch("cayz_agent.__main__.create_graph", return_value=mock_app),
+            patch("builtins.input", return_value="exit"),
+            patch("builtins.print") as mock_print,
+        ):
             main()
 
         # graph.invoke 不应被调用
@@ -43,11 +47,13 @@ class TestMain:
         """输入 'quit' 也应退出循环"""
         main = self._import_main()
 
-        with patch("cayz_agent.__main__.get_settings"), \
-             patch("cayz_agent.__main__.setup_logging"), \
-             patch("cayz_agent.__main__.create_graph", return_value=MagicMock()), \
-             patch("builtins.input", return_value="quit"), \
-             patch("builtins.print"):
+        with (
+            patch("cayz_agent.__main__.get_settings"),
+            patch("cayz_agent.__main__.setup_logging"),
+            patch("cayz_agent.__main__.create_graph", return_value=MagicMock()),
+            patch("builtins.input", return_value="quit"),
+            patch("builtins.print"),
+        ):
             main()
 
     def test_exit_case_insensitive(self):
@@ -55,11 +61,13 @@ class TestMain:
         main = self._import_main()
 
         mock_app = MagicMock()
-        with patch("cayz_agent.__main__.get_settings"), \
-             patch("cayz_agent.__main__.setup_logging"), \
-             patch("cayz_agent.__main__.create_graph", return_value=mock_app), \
-             patch("builtins.input", return_value="EXIT"), \
-             patch("builtins.print"):
+        with (
+            patch("cayz_agent.__main__.get_settings"),
+            patch("cayz_agent.__main__.setup_logging"),
+            patch("cayz_agent.__main__.create_graph", return_value=mock_app),
+            patch("builtins.input", return_value="EXIT"),
+            patch("builtins.print"),
+        ):
             main()
 
         mock_app.invoke.assert_not_called()
@@ -77,12 +85,14 @@ class TestMain:
         # 第一次输入正常消息，第二次输入 exit 退出
         inputs = iter(["你好", "exit"])
 
-        with patch("cayz_agent.__main__.get_settings"), \
-             patch("cayz_agent.__main__.setup_logging"), \
-             patch("cayz_agent.__main__.create_graph", return_value=mock_app), \
-             patch("builtins.input", side_effect=inputs), \
-             patch("builtins.print") as mock_print, \
-             patch("cayz_agent.__main__.sanitize_text", side_effect=lambda x: x) as mock_sanitize:
+        with (
+            patch("cayz_agent.__main__.get_settings"),
+            patch("cayz_agent.__main__.setup_logging"),
+            patch("cayz_agent.__main__.create_graph", return_value=mock_app),
+            patch("builtins.input", side_effect=inputs),
+            patch("builtins.print") as mock_print,
+            patch("cayz_agent.__main__.sanitize_text", side_effect=lambda x: x) as mock_sanitize,
+        ):
             main()
 
         # graph.invoke 应被调用一次
@@ -102,12 +112,14 @@ class TestMain:
 
         inputs = iter(["触发错误", "exit"])
 
-        with patch("cayz_agent.__main__.get_settings"), \
-             patch("cayz_agent.__main__.setup_logging"), \
-             patch("cayz_agent.__main__.create_graph", return_value=mock_app), \
-             patch("builtins.input", side_effect=inputs), \
-             patch("builtins.print") as mock_print, \
-             patch("cayz_agent.__main__.sanitize_exception", return_value="敏感信息已隐藏") as mock_sanitize_exc:
+        with (
+            patch("cayz_agent.__main__.get_settings"),
+            patch("cayz_agent.__main__.setup_logging"),
+            patch("cayz_agent.__main__.create_graph", return_value=mock_app),
+            patch("builtins.input", side_effect=inputs),
+            patch("builtins.print") as mock_print,
+            patch("cayz_agent.__main__.sanitize_exception", return_value="敏感信息已隐藏") as mock_sanitize_exc,
+        ):
             main()
 
         # sanitize_exception 应被调用
@@ -120,11 +132,13 @@ class TestMain:
         """启动时应打印版本号横幅"""
         main = self._import_main()
 
-        with patch("cayz_agent.__main__.get_settings"), \
-             patch("cayz_agent.__main__.setup_logging"), \
-             patch("cayz_agent.__main__.create_graph", return_value=MagicMock()), \
-             patch("builtins.input", return_value="exit"), \
-             patch("builtins.print") as mock_print:
+        with (
+            patch("cayz_agent.__main__.get_settings"),
+            patch("cayz_agent.__main__.setup_logging"),
+            patch("cayz_agent.__main__.create_graph", return_value=MagicMock()),
+            patch("builtins.input", return_value="exit"),
+            patch("builtins.print") as mock_print,
+        ):
             main()
 
         printed = " ".join(str(call.args[0]) for call in mock_print.call_args_list if call.args)
@@ -142,11 +156,13 @@ class TestMain:
 
         inputs = iter(["hi", "exit"])
 
-        with patch("cayz_agent.__main__.get_settings"), \
-             patch("cayz_agent.__main__.setup_logging"), \
-             patch("cayz_agent.__main__.create_graph", return_value=mock_app), \
-             patch("builtins.input", side_effect=inputs), \
-             patch("builtins.print"):
+        with (
+            patch("cayz_agent.__main__.get_settings"),
+            patch("cayz_agent.__main__.setup_logging"),
+            patch("cayz_agent.__main__.create_graph", return_value=mock_app),
+            patch("builtins.input", side_effect=inputs),
+            patch("builtins.print"),
+        ):
             main()
 
         # 验证 invoke 被调用时传入了固定 thread_id

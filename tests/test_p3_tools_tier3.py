@@ -8,23 +8,24 @@ P3 第三梯队工具测试：hash_encode / text_diff / regex_test / unit_conver
 4. unit_convert：各类别换算 + 温度公式 + 错误单位
 5. 权限分级：scope 与工具分配
 """
-import hashlib
+
 import base64
+import hashlib
 
 import pytest
 
 from cayz_agent.tools import (
-    hash_encode,
-    text_diff,
-    regex_test,
-    unit_convert,
     get_tools_for_scope,
+    hash_encode,
+    regex_test,
+    text_diff,
+    unit_convert,
 )
-
 
 # ============================================================
 # 1. hash_encode 工具测试
 # ============================================================
+
 
 class TestHashEncode:
     """哈希计算与编码转换"""
@@ -66,7 +67,7 @@ class TestHashEncode:
 
     def test_base64_decode(self):
         """Base64 解码应正确"""
-        encoded = base64.b64encode("hello".encode("utf-8")).decode("ascii")
+        encoded = base64.b64encode(b"hello").decode("ascii")
         result = hash_encode.invoke({"text": encoded, "algorithm": "base64_decode"})
         assert result == "hello"
 
@@ -125,6 +126,7 @@ class TestHashEncode:
 # 2. text_diff 工具测试
 # ============================================================
 
+
 class TestTextDiff:
     """文本差异对比"""
 
@@ -180,13 +182,9 @@ class TestTextDiff:
         text2 = "\n".join(f"line{i}" if i != 5 else "MODIFIED" for i in range(10))
 
         # 上下文 1 行
-        result_1 = text_diff.invoke({
-            "text1": text1, "text2": text2, "lines_per_context": 1
-        })
+        result_1 = text_diff.invoke({"text1": text1, "text2": text2, "lines_per_context": 1})
         # 上下文 5 行
-        result_5 = text_diff.invoke({
-            "text1": text1, "text2": text2, "lines_per_context": 5
-        })
+        result_5 = text_diff.invoke({"text1": text1, "text2": text2, "lines_per_context": 5})
 
         # 上下文 5 行的结果应更长（显示更多未变更行）
         assert len(result_5) > len(result_1)
@@ -204,6 +202,7 @@ class TestTextDiff:
 # ============================================================
 # 3. regex_test 工具测试
 # ============================================================
+
 
 class TestRegexTest:
     """正则表达式测试"""
@@ -226,10 +225,7 @@ class TestRegexTest:
 
     def test_capture_groups(self):
         """捕获组应显示"""
-        result = regex_test.invoke({
-            "pattern": r"(\w+)@(\w+)\.(\w+)",
-            "text": "user@example.com"
-        })
+        result = regex_test.invoke({"pattern": r"(\w+)@(\w+)\.(\w+)", "text": "user@example.com"})
         assert "捕获组" in result
         assert "user" in result
         assert "example" in result
@@ -237,10 +233,7 @@ class TestRegexTest:
 
     def test_named_groups(self):
         """命名捕获组应显示"""
-        result = regex_test.invoke({
-            "pattern": r"(?P<year>\d{4})-(?P<month>\d{2})",
-            "text": "2026-07"
-        })
+        result = regex_test.invoke({"pattern": r"(?P<year>\d{4})-(?P<month>\d{2})", "text": "2026-07"})
         assert "命名组" in result or "year" in result
         assert "2026" in result
         assert "07" in result
@@ -251,20 +244,16 @@ class TestRegexTest:
         result_no_flag = regex_test.invoke({"pattern": "hello", "text": "HELLO"})
         assert "无匹配" in result_no_flag
         # 带 i flag：应匹配
-        result_with_flag = regex_test.invoke({
-            "pattern": "hello", "text": "HELLO", "flags": "i"
-        })
+        result_with_flag = regex_test.invoke({"pattern": "hello", "text": "HELLO", "flags": "i"})
         assert "匹配数: 1" in result_with_flag
 
     def test_multiline_flag(self):
         """m flag 应支持多行匹配"""
         text = "line1\nline2\nline3"
         # 不带 m flag：^ 只匹配字符串开头
-        result_no_m = regex_test.invoke({"pattern": "^line", "text": text})
+        _result_no_m = regex_test.invoke({"pattern": "^line", "text": text})
         # 带 m flag：^ 匹配每行开头
-        result_with_m = regex_test.invoke({
-            "pattern": "^line", "text": text, "flags": "m"
-        })
+        result_with_m = regex_test.invoke({"pattern": "^line", "text": text, "flags": "m"})
         # 多行模式应匹配更多
         assert "匹配数: 3" in result_with_m
 
@@ -299,141 +288,110 @@ class TestRegexTest:
 # 4. unit_convert 工具测试
 # ============================================================
 
+
 class TestUnitConvert:
     """单位换算"""
 
     def test_length_km_to_m(self):
         """长度：km → m"""
-        result = unit_convert.invoke({
-            "value": 1, "from_unit": "km", "to_unit": "m", "category": "length"
-        })
+        result = unit_convert.invoke({"value": 1, "from_unit": "km", "to_unit": "m", "category": "length"})
         assert "1000" in result
 
     def test_length_m_to_km(self):
         """长度：m → km"""
-        result = unit_convert.invoke({
-            "value": 1000, "from_unit": "m", "to_unit": "km", "category": "length"
-        })
+        result = unit_convert.invoke({"value": 1000, "from_unit": "m", "to_unit": "km", "category": "length"})
         assert "1" in result
 
     def test_length_mi_to_km(self):
         """长度：英里 → km"""
-        result = unit_convert.invoke({
-            "value": 1, "from_unit": "mi", "to_unit": "km", "category": "length"
-        })
+        result = unit_convert.invoke({"value": 1, "from_unit": "mi", "to_unit": "km", "category": "length"})
         # 1 mile ≈ 1.609344 km
         assert "1.609" in result or "1.61" in result
 
     def test_weight_kg_to_lb(self):
         """重量：kg → lb"""
-        result = unit_convert.invoke({
-            "value": 1, "from_unit": "kg", "to_unit": "lb", "category": "weight"
-        })
+        result = unit_convert.invoke({"value": 1, "from_unit": "kg", "to_unit": "lb", "category": "weight"})
         # 1 kg ≈ 2.20462 lb
         assert "2.20" in result or "2.2046" in result
 
     def test_weight_jin_to_kg(self):
         """重量：斤 → kg"""
-        result = unit_convert.invoke({
-            "value": 2, "from_unit": "斤", "to_unit": "kg", "category": "weight"
-        })
+        result = unit_convert.invoke({"value": 2, "from_unit": "斤", "to_unit": "kg", "category": "weight"})
         # 2 斤 = 1 kg
         assert "1" in result
 
     def test_temperature_c_to_f(self):
         """温度：摄氏 → 华氏"""
-        result = unit_convert.invoke({
-            "value": 0, "from_unit": "c", "to_unit": "f", "category": "temperature"
-        })
+        result = unit_convert.invoke({"value": 0, "from_unit": "c", "to_unit": "f", "category": "temperature"})
         # 0°C = 32°F
         assert "32" in result
 
     def test_temperature_f_to_c(self):
         """温度：华氏 → 摄氏"""
-        result = unit_convert.invoke({
-            "value": 212, "from_unit": "f", "to_unit": "c", "category": "temperature"
-        })
+        result = unit_convert.invoke({"value": 212, "from_unit": "f", "to_unit": "c", "category": "temperature"})
         # 212°F = 100°C
         assert "100" in result
 
     def test_temperature_c_to_k(self):
         """温度：摄氏 → 开尔文"""
-        result = unit_convert.invoke({
-            "value": 0, "from_unit": "c", "to_unit": "k", "category": "temperature"
-        })
+        result = unit_convert.invoke({"value": 0, "from_unit": "c", "to_unit": "k", "category": "temperature"})
         # 0°C = 273.15 K
         assert "273.15" in result
 
     def test_time_h_to_s(self):
         """时间：小时 → 秒"""
-        result = unit_convert.invoke({
-            "value": 1, "from_unit": "h", "to_unit": "s", "category": "time"
-        })
+        result = unit_convert.invoke({"value": 1, "from_unit": "h", "to_unit": "s", "category": "time"})
         assert "3600" in result
 
     def test_time_day_to_h(self):
         """时间：天 → 小时"""
-        result = unit_convert.invoke({
-            "value": 1, "from_unit": "day", "to_unit": "h", "category": "time"
-        })
+        result = unit_convert.invoke({"value": 1, "from_unit": "day", "to_unit": "h", "category": "time"})
         assert "24" in result
 
     def test_data_kb_to_b(self):
         """数据量：KB → B"""
-        result = unit_convert.invoke({
-            "value": 1, "from_unit": "kb", "to_unit": "b", "category": "data"
-        })
+        result = unit_convert.invoke({"value": 1, "from_unit": "kb", "to_unit": "b", "category": "data"})
         assert "1024" in result
 
     def test_data_mb_to_gb(self):
         """数据量：MB → GB"""
-        result = unit_convert.invoke({
-            "value": 1024, "from_unit": "mb", "to_unit": "gb", "category": "data"
-        })
+        result = unit_convert.invoke({"value": 1024, "from_unit": "mb", "to_unit": "gb", "category": "data"})
         assert "1" in result
 
     def test_invalid_value_rejected(self):
         """无效数值应被拒绝（Pydantic 在 invoke 时拦截）"""
         # Pydantic 的 float 类型校验会拦截非法字符串，抛 ValidationError
         from pydantic import ValidationError
+
         with pytest.raises(ValidationError):
-            unit_convert.invoke({
-                "value": "not_a_number", "from_unit": "m", "to_unit": "km", "category": "length"
-            })
+            unit_convert.invoke({"value": "not_a_number", "from_unit": "m", "to_unit": "km", "category": "length"})
 
     def test_unsupported_category(self):
         """不支持的类别应返回错误"""
-        result = unit_convert.invoke({
-            "value": 1, "from_unit": "x", "to_unit": "y", "category": "unknown"
-        })
+        result = unit_convert.invoke({"value": 1, "from_unit": "x", "to_unit": "y", "category": "unknown"})
         assert "不支持" in result
 
     def test_unsupported_unit(self):
         """不支持的单位应返回错误并列出可用单位"""
-        result = unit_convert.invoke({
-            "value": 1, "from_unit": "xxx", "to_unit": "m", "category": "length"
-        })
+        result = unit_convert.invoke({"value": 1, "from_unit": "xxx", "to_unit": "m", "category": "length"})
         assert "不支持" in result
         assert "km" in result  # 错误信息应列出可用单位
 
     def test_empty_unit_rejected(self):
         """空单位应被拒绝"""
-        result = unit_convert.invoke({
-            "value": 1, "from_unit": "", "to_unit": "m", "category": "length"
-        })
+        result = unit_convert.invoke({"value": 1, "from_unit": "", "to_unit": "m", "category": "length"})
         assert "为空" in result
 
     def test_default_category_is_length(self):
         """默认类别应为 length"""
-        result = unit_convert.invoke({
-            "value": 1, "from_unit": "km", "to_unit": "m"
-        })
+        result = unit_convert.invoke({"value": 1, "from_unit": "km", "to_unit": "m"})
         assert "1000" in result
 
 
 # ============================================================
 # 5. 权限分级测试
 # ============================================================
+
 
 class TestToolScopePermissionsTier3:
     """第三梯队工具权限分级"""

@@ -4,6 +4,7 @@
 所有 provider 都通过 langchain_openai.ChatOpenAI 接入（OpenAI 兼容协议），
 少数原生不兼容的 provider 通过对应的 langchain 社区包接入。
 """
+
 import logging
 
 from langchain_openai import ChatOpenAI
@@ -56,8 +57,7 @@ def create_llm() -> ChatOpenAI:
 
 def _create_openai_llm(settings) -> ChatOpenAI:
     """OpenAI 官方或兼容服务（含阿里 DashScope）"""
-    logger.info("使用 OpenAI 兼容 provider, model=%s, base=%s",
-                settings.model_name, settings.openai_api_base)
+    logger.info("使用 OpenAI 兼容 provider, model=%s, base=%s", settings.model_name, settings.openai_api_base)
     return ChatOpenAI(
         model=settings.model_name,
         temperature=settings.temperature,
@@ -127,8 +127,7 @@ def _create_ollama_llm(settings) -> ChatOpenAI:
     base_url = settings.ollama_base_url.rstrip("/")
     if not base_url.endswith("/v1"):
         base_url = f"{base_url}/v1"
-    logger.info("使用 Ollama 本地 provider, model=%s, base=%s",
-                settings.model_name, base_url)
+    logger.info("使用 Ollama 本地 provider, model=%s, base=%s", settings.model_name, base_url)
     return ChatOpenAI(
         model=settings.model_name,
         temperature=settings.temperature,

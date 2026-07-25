@@ -1,12 +1,13 @@
 """
 邮件发送集成模块单元测试
 """
-from unittest.mock import patch, MagicMock
+
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cayz_agent.integrations.email_sender import EmailSender
 from cayz_agent.exceptions import EmailError
+from cayz_agent.integrations.email_sender import EmailSender
 
 
 class TestEmailSender:

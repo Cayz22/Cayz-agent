@@ -3,15 +3,16 @@ rag 模块单元测试：验证知识库管理器
 
 完全 mock 掉 ChromaDB 和 Embeddings，避免真实文件 I/O 和 API 调用
 """
+
 import os
 import tempfile
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from langchain_core.documents import Document
 
-from cayz_agent.rag import RAGManager
 from cayz_agent.config import Settings
+from cayz_agent.rag import RAGManager
 
 
 @pytest.fixture
@@ -49,9 +50,11 @@ class TestRAGManager:
 
     def _create_manager(self, mock_settings, mock_embeddings, mock_vectorstore):
         """创建完全 mock 的 RAGManager，不触碰真实文件系统"""
-        with patch("cayz_agent.rag.get_settings", return_value=mock_settings), \
-             patch("cayz_agent.rag.RAGManager._create_embeddings", return_value=mock_embeddings), \
-             patch("cayz_agent.rag.RAGManager._create_vectorstore", return_value=mock_vectorstore):
+        with (
+            patch("cayz_agent.rag.get_settings", return_value=mock_settings),
+            patch("cayz_agent.rag.RAGManager._create_embeddings", return_value=mock_embeddings),
+            patch("cayz_agent.rag.RAGManager._create_vectorstore", return_value=mock_vectorstore),
+        ):
             return RAGManager()
 
     def test_init_creates_vectorstore(self, mock_settings, mock_embeddings, mock_vectorstore):
@@ -168,9 +171,11 @@ class TestRAGDeleteBySource:
     """测试 delete_by_source 方法"""
 
     def _create_manager(self, mock_settings, mock_embeddings, mock_vectorstore):
-        with patch("cayz_agent.rag.get_settings", return_value=mock_settings), \
-             patch("cayz_agent.rag.RAGManager._create_embeddings", return_value=mock_embeddings), \
-             patch("cayz_agent.rag.RAGManager._create_vectorstore", return_value=mock_vectorstore):
+        with (
+            patch("cayz_agent.rag.get_settings", return_value=mock_settings),
+            patch("cayz_agent.rag.RAGManager._create_embeddings", return_value=mock_embeddings),
+            patch("cayz_agent.rag.RAGManager._create_vectorstore", return_value=mock_vectorstore),
+        ):
             return RAGManager()
 
     def test_delete_existing_docs(self, mock_settings, mock_embeddings, mock_vectorstore):
@@ -214,9 +219,11 @@ class TestRAGListSources:
     """测试 list_sources 方法"""
 
     def _create_manager(self, mock_settings, mock_embeddings, mock_vectorstore):
-        with patch("cayz_agent.rag.get_settings", return_value=mock_settings), \
-             patch("cayz_agent.rag.RAGManager._create_embeddings", return_value=mock_embeddings), \
-             patch("cayz_agent.rag.RAGManager._create_vectorstore", return_value=mock_vectorstore):
+        with (
+            patch("cayz_agent.rag.get_settings", return_value=mock_settings),
+            patch("cayz_agent.rag.RAGManager._create_embeddings", return_value=mock_embeddings),
+            patch("cayz_agent.rag.RAGManager._create_vectorstore", return_value=mock_vectorstore),
+        ):
             return RAGManager()
 
     def test_returns_unique_sources(self, mock_settings, mock_embeddings, mock_vectorstore):
@@ -263,9 +270,11 @@ class TestRAGBatchImport:
     """测试 add_batch 方法"""
 
     def _create_manager(self, mock_settings, mock_embeddings, mock_vectorstore):
-        with patch("cayz_agent.rag.get_settings", return_value=mock_settings), \
-             patch("cayz_agent.rag.RAGManager._create_embeddings", return_value=mock_embeddings), \
-             patch("cayz_agent.rag.RAGManager._create_vectorstore", return_value=mock_vectorstore):
+        with (
+            patch("cayz_agent.rag.get_settings", return_value=mock_settings),
+            patch("cayz_agent.rag.RAGManager._create_embeddings", return_value=mock_embeddings),
+            patch("cayz_agent.rag.RAGManager._create_vectorstore", return_value=mock_vectorstore),
+        ):
             return RAGManager()
 
     def test_batch_import_multiple_docs(self, mock_settings, mock_embeddings, mock_vectorstore):
@@ -331,9 +340,11 @@ class TestRAGUpdateDocument:
     """测试 update_document 方法"""
 
     def _create_manager(self, mock_settings, mock_embeddings, mock_vectorstore):
-        with patch("cayz_agent.rag.get_settings", return_value=mock_settings), \
-             patch("cayz_agent.rag.RAGManager._create_embeddings", return_value=mock_embeddings), \
-             patch("cayz_agent.rag.RAGManager._create_vectorstore", return_value=mock_vectorstore):
+        with (
+            patch("cayz_agent.rag.get_settings", return_value=mock_settings),
+            patch("cayz_agent.rag.RAGManager._create_embeddings", return_value=mock_embeddings),
+            patch("cayz_agent.rag.RAGManager._create_vectorstore", return_value=mock_vectorstore),
+        ):
             return RAGManager()
 
     def test_update_replaces_document(self, mock_settings, mock_embeddings, mock_vectorstore):
@@ -367,13 +378,16 @@ class TestRAGSingleton:
     def test_get_rag_manager_returns_singleton(self):
         """get_rag_manager 应返回同一实例"""
         import threading
-        from cayz_agent.rag import get_rag_manager, reset_rag_manager, RAGManager
+
+        from cayz_agent.rag import RAGManager, get_rag_manager, reset_rag_manager
 
         reset_rag_manager()
 
-        with patch("cayz_agent.rag.RAGManager.__init__", return_value=None), \
-             patch("cayz_agent.rag.RAGManager._create_embeddings", return_value=MagicMock()), \
-             patch("cayz_agent.rag.RAGManager._create_vectorstore", return_value=MagicMock()):
+        with (
+            patch("cayz_agent.rag.RAGManager.__init__", return_value=None),
+            patch("cayz_agent.rag.RAGManager._create_embeddings", return_value=MagicMock()),
+            patch("cayz_agent.rag.RAGManager._create_vectorstore", return_value=MagicMock()),
+        ):
             m1 = get_rag_manager()
             m2 = get_rag_manager()
             assert m1 is m2
@@ -383,6 +397,7 @@ class TestRAGSingleton:
     def test_get_rag_manager_thread_safe(self):
         """P3 新增：并发调用 get_rag_manager 应只创建一个实例"""
         import threading
+
         from cayz_agent.rag import get_rag_manager, reset_rag_manager
 
         reset_rag_manager()
@@ -395,9 +410,11 @@ class TestRAGSingleton:
             m = get_rag_manager()
             instances.append(m)
 
-        with patch("cayz_agent.rag.RAGManager.__init__", return_value=None), \
-             patch("cayz_agent.rag.RAGManager._create_embeddings", return_value=MagicMock()), \
-             patch("cayz_agent.rag.RAGManager._create_vectorstore", return_value=MagicMock()):
+        with (
+            patch("cayz_agent.rag.RAGManager.__init__", return_value=None),
+            patch("cayz_agent.rag.RAGManager._create_embeddings", return_value=MagicMock()),
+            patch("cayz_agent.rag.RAGManager._create_vectorstore", return_value=MagicMock()),
+        ):
             threads = [threading.Thread(target=worker) for _ in range(10)]
             for t in threads:
                 t.start()
@@ -416,9 +433,11 @@ class TestRAGSingleton:
 
         reset_rag_manager()
 
-        with patch("cayz_agent.rag.RAGManager.__init__", return_value=None), \
-             patch("cayz_agent.rag.RAGManager._create_embeddings", return_value=MagicMock()), \
-             patch("cayz_agent.rag.RAGManager._create_vectorstore", return_value=MagicMock()):
+        with (
+            patch("cayz_agent.rag.RAGManager.__init__", return_value=None),
+            patch("cayz_agent.rag.RAGManager._create_embeddings", return_value=MagicMock()),
+            patch("cayz_agent.rag.RAGManager._create_vectorstore", return_value=MagicMock()),
+        ):
             m1 = get_rag_manager()
             reset_rag_manager()
             m2 = get_rag_manager()
@@ -431,13 +450,14 @@ class TestRAGSingleton:
 # P4 新增：CachedEmbeddings 测试
 # ============================================================
 
+
 class TestCachedEmbeddings:
     """P4 新增：测试 CachedEmbeddings 缓存包装器"""
 
     def test_embed_query_caches_on_miss(self):
         """未命中缓存时应调用底层并写入缓存"""
-        from cayz_agent.rag import CachedEmbeddings
         from cayz_agent.cache import reset_cache_singletons
+        from cayz_agent.rag import CachedEmbeddings
 
         reset_cache_singletons()
 
@@ -452,8 +472,8 @@ class TestCachedEmbeddings:
 
     def test_embed_query_hits_cache(self):
         """命中缓存时不应调用底层"""
-        from cayz_agent.rag import CachedEmbeddings
         from cayz_agent.cache import reset_cache_singletons
+        from cayz_agent.rag import CachedEmbeddings
 
         reset_cache_singletons()
 
@@ -471,8 +491,8 @@ class TestCachedEmbeddings:
 
     def test_embed_documents_caches_per_text(self):
         """批量向量化应逐条缓存"""
-        from cayz_agent.rag import CachedEmbeddings
         from cayz_agent.cache import reset_cache_singletons
+        from cayz_agent.rag import CachedEmbeddings
 
         reset_cache_singletons()
 
@@ -487,8 +507,8 @@ class TestCachedEmbeddings:
 
     def test_embed_documents_partial_cache_hit(self):
         """部分命中缓存时应只向底层请求未命中的文本"""
-        from cayz_agent.rag import CachedEmbeddings
         from cayz_agent.cache import reset_cache_singletons
+        from cayz_agent.rag import CachedEmbeddings
 
         reset_cache_singletons()
 
@@ -512,8 +532,8 @@ class TestCachedEmbeddings:
 
     def test_embed_documents_all_cached(self):
         """全部命中缓存时不应调用底层"""
-        from cayz_agent.rag import CachedEmbeddings
         from cayz_agent.cache import reset_cache_singletons
+        from cayz_agent.rag import CachedEmbeddings
 
         reset_cache_singletons()
 
@@ -537,6 +557,7 @@ class TestCachedEmbeddings:
 # P4 新增：_create_embeddings / _create_vectorstore 分支测试
 # ============================================================
 
+
 class TestRAGCreateEmbeddings:
     """P4 新增：测试 _create_embeddings 的 provider 分支"""
 
@@ -559,6 +580,7 @@ class TestRAGCreateEmbeddings:
 
         # 应返回 CachedEmbeddings 包装
         from cayz_agent.rag import CachedEmbeddings
+
         assert isinstance(result, CachedEmbeddings)
         mock_ollama.assert_called_once()
 
@@ -575,6 +597,7 @@ class TestRAGCreateEmbeddings:
 
         # 模拟 ImportError
         import builtins
+
         real_import = builtins.__import__
 
         def fake_import(name, *args, **kwargs):
@@ -588,6 +611,7 @@ class TestRAGCreateEmbeddings:
             result = manager._create_embeddings()
 
         from cayz_agent.rag import CachedEmbeddings
+
         assert isinstance(result, CachedEmbeddings)
 
     def test_create_embeddings_openai_default(self):
@@ -605,6 +629,7 @@ class TestRAGCreateEmbeddings:
         result = manager._create_embeddings()
 
         from cayz_agent.rag import CachedEmbeddings
+
         assert isinstance(result, CachedEmbeddings)
 
 
@@ -625,6 +650,7 @@ class TestRAGCreateVectorstore:
         manager._settings = mock_settings
 
         import builtins
+
         real_import = builtins.__import__
 
         def fake_import(name, *args, **kwargs):
@@ -652,9 +678,11 @@ class TestRAGCreateVectorstore:
 
         mock_embeddings = MagicMock()
 
-        with patch("cayz_agent.rag.get_settings", return_value=mock_settings), \
-             patch("cayz_agent.rag.RAGManager._create_embeddings", return_value=mock_embeddings), \
-             patch("cayz_agent.rag.RAGManager._create_vectorstore", side_effect=RuntimeError("DB init failed")):
+        with (
+            patch("cayz_agent.rag.get_settings", return_value=mock_settings),
+            patch("cayz_agent.rag.RAGManager._create_embeddings", return_value=mock_embeddings),
+            patch("cayz_agent.rag.RAGManager._create_vectorstore", side_effect=RuntimeError("DB init failed")),
+        ):
             with pytest.raises(RAGConnectionError) as exc_info:
                 RAGManager()
 
@@ -664,6 +692,7 @@ class TestRAGCreateVectorstore:
 # ============================================================
 # P4 新增：search 缓存命中与 clear 方法测试
 # ============================================================
+
 
 class TestRAGSearchCache:
     """P4 新增：测试 RAG 检索缓存"""
@@ -705,9 +734,11 @@ class TestRAGSearchCache:
         assert mock_vectorstore.similarity_search_with_score.call_count == 1
 
     def _create_manager(self, mock_settings, mock_embeddings, mock_vectorstore):
-        with patch("cayz_agent.rag.get_settings", return_value=mock_settings), \
-             patch("cayz_agent.rag.RAGManager._create_embeddings", return_value=mock_embeddings), \
-             patch("cayz_agent.rag.RAGManager._create_vectorstore", return_value=mock_vectorstore):
+        with (
+            patch("cayz_agent.rag.get_settings", return_value=mock_settings),
+            patch("cayz_agent.rag.RAGManager._create_embeddings", return_value=mock_embeddings),
+            patch("cayz_agent.rag.RAGManager._create_vectorstore", return_value=mock_vectorstore),
+        ):
             return RAGManager()
 
 
@@ -731,8 +762,9 @@ class TestRAGClear:
         assert manager._vectorstore is new_vectorstore
 
     def _create_manager(self, mock_settings, mock_embeddings, mock_vectorstore):
-        with patch("cayz_agent.rag.get_settings", return_value=mock_settings), \
-             patch("cayz_agent.rag.RAGManager._create_embeddings", return_value=mock_embeddings), \
-             patch("cayz_agent.rag.RAGManager._create_vectorstore", return_value=mock_vectorstore):
+        with (
+            patch("cayz_agent.rag.get_settings", return_value=mock_settings),
+            patch("cayz_agent.rag.RAGManager._create_embeddings", return_value=mock_embeddings),
+            patch("cayz_agent.rag.RAGManager._create_vectorstore", return_value=mock_vectorstore),
+        ):
             return RAGManager()
-

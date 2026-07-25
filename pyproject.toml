@@ -64,7 +64,12 @@ target-version = "py311"
 # 启用常用规则集
 select = ["E", "F", "W", "I", "UP", "B"]
 # 忽略部分与项目风格冲突的规则
-ignore = ["E501"]  # 行长度由 ruff format 管理
+ignore = [
+    "E501",   # 行长度由 ruff format 管理
+    "E402",   # 允许模块级 import 不在文件顶部（延迟导入场景）
+    "B904",   # 允许 except 中直接 raise（HTTPException 场景）
+    "UP038",  # 保留 (X, Y) 元组形式（兼容性考虑）
+]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["F401"]  # 测试文件允许未使用的 import（fixture 等）

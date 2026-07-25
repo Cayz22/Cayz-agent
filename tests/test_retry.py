@@ -1,19 +1,20 @@
 """
 retry 模块单元测试：验证重试与监控逻辑
 """
+
 import logging
 import time
 
 import pytest
 
-from cayz_agent.retry import retry_on_error, log_execution, RETRYABLE_EXCEPTIONS
 from cayz_agent.exceptions import (
-    NotifyError,
-    EmailError,
-    RAGConnectionError,
-    LLMRateLimitError,
     CRMError,
+    EmailError,
+    LLMRateLimitError,
+    NotifyError,
+    RAGConnectionError,
 )
+from cayz_agent.retry import RETRYABLE_EXCEPTIONS, log_execution, retry_on_error
 
 
 class TestRetryOnError:
@@ -158,6 +159,7 @@ class TestLogExecution:
 
     def test_logs_success(self, caplog):
         """成功时应记录耗时"""
+
         @log_execution
         def func():
             return 42
@@ -170,6 +172,7 @@ class TestLogExecution:
 
     def test_logs_failure_and_reraises(self, caplog):
         """失败时应记录异常并重新抛出"""
+
         @log_execution
         def func():
             raise RuntimeError("boom")
@@ -182,6 +185,7 @@ class TestLogExecution:
 
     def test_preserves_function_name(self):
         """装饰器应保留原函数名"""
+
         @log_execution
         def my_function():
             """docstring"""

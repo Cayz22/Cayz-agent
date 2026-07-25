@@ -1,27 +1,28 @@
 """
 alerts 模块单元测试：验证告警逻辑
 """
+
 import logging
 import time
 
 import pytest
 
 from cayz_agent.alerts import (
-    AlertManager,
     Alert,
     AlertLevel,
+    AlertManager,
     AlertWatcher,
-    get_alert_manager,
     check_alerts,
+    get_alert_manager,
     start_alert_watcher,
     stop_alert_watcher,
 )
 from cayz_agent.monitor import (
     get_registry,
     record_request,
+    record_retry,
     record_tool_call,
     record_validation_failure,
-    record_retry,
 )
 
 

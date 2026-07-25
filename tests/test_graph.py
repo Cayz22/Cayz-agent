@@ -6,19 +6,20 @@ graph 模块单元测试：验证图结构与节点逻辑
 - agent_node: mock LLM 后验证系统提示词注入与消息截断
 - validate_input_node: 验证输入验证节点
 """
-from unittest.mock import patch, MagicMock
+
+from unittest.mock import MagicMock, patch
 
 import pytest
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import END
 
 from cayz_agent.graph import (
-    create_graph,
-    should_continue,
-    agent_node,
-    validate_input_node,
     MAX_MESSAGES,
     AgentState,
+    agent_node,
+    create_graph,
+    should_continue,
+    validate_input_node,
 )
 
 

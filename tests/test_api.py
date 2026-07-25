@@ -3,7 +3,8 @@ API 模块单元测试：验证 FastAPI 端点
 
 使用 httpx.AsyncClient + TestClient 测试，mock LLM 避免真实 API 调用。
 """
-from unittest.mock import patch, MagicMock
+
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -147,9 +148,7 @@ class TestChatStream:
         mock_stream = MagicMock()
         mock_stream.stream.return_value = iter([])
 
-        with patch("cayz_agent.graph.llm_with_tools", mock_llm), patch(
-            "cayz_agent.api._agent_app", mock_stream
-        ):
+        with patch("cayz_agent.graph.llm_with_tools", mock_llm), patch("cayz_agent.api._agent_app", mock_stream):
             resp = client.post("/chat/stream", json={"message": "你好"})
 
         assert resp.status_code == 200
@@ -174,8 +173,10 @@ class TestChatStream:
         mock_stream = MagicMock()
         mock_stream.stream.return_value = iter([])
 
-        with patch("cayz_agent.api._agent_app", mock_stream), \
-             patch("cayz_agent.api.get_session_manager") as mock_get_mgr:
+        with (
+            patch("cayz_agent.api._agent_app", mock_stream),
+            patch("cayz_agent.api.get_session_manager") as mock_get_mgr,
+        ):
             resp = client.post("/chat/stream", json={"message": "你好"})
 
         assert resp.status_code == 200
@@ -279,6 +280,7 @@ class TestKnowledgeEndpoints:
     def test_upload_oversized_text_rejected_by_pydantic(self, client):
         """POST /knowledge/upload 超长文本应被 Pydantic 拦截（422）"""
         from cayz_agent.validators import MAX_KNOWLEDGE_TEXT_LENGTH
+
         huge_text = "a" * (MAX_KNOWLEDGE_TEXT_LENGTH + 1)
         resp = client.post("/knowledge/upload", json={"text": huge_text, "source": "test"})
         assert resp.status_code == 422  # Pydantic validation error
@@ -291,12 +293,15 @@ class TestKnowledgeEndpoints:
                 ["id1", "id2", "id3"],
                 ["id4", "id5", "id6"],
             ]
-            resp = client.post("/knowledge/batch-upload", json={
-                "items": [
-                    {"text": "doc1 content", "source": "s1"},
-                    {"text": "doc2 content", "source": "s2"},
-                ]
-            })
+            resp = client.post(
+                "/knowledge/batch-upload",
+                json={
+                    "items": [
+                        {"text": "doc1 content", "source": "s1"},
+                        {"text": "doc2 content", "source": "s2"},
+                    ]
+                },
+            )
         assert resp.status_code == 200
         data = resp.json()
         assert data["success"] is True
@@ -311,12 +316,15 @@ class TestKnowledgeEndpoints:
         """POST /knowledge/batch-upload 空文本应在 rejected 中报告"""
         with patch("cayz_agent.rag.get_rag_manager") as mock:
             mock.return_value.add_documents.return_value = 0
-            resp = client.post("/knowledge/batch-upload", json={
-                "items": [
-                    {"text": "", "source": "empty"},
-                    {"text": "  ", "source": "whitespace"},
-                ]
-            })
+            resp = client.post(
+                "/knowledge/batch-upload",
+                json={
+                    "items": [
+                        {"text": "", "source": "empty"},
+                        {"text": "  ", "source": "whitespace"},
+                    ]
+                },
+            )
         assert resp.status_code == 200
         data = resp.json()
         assert len(data["rejected"]) == 2
@@ -327,6 +335,7 @@ class TestKnowledgeEndpoints:
     def test_batch_upload_exceeds_max_items_rejected(self, client):
         """POST /knowledge/batch-upload 超过 MAX_BATCH_ITEMS 应被 Pydantic 拦截"""
         from cayz_agent.validators import MAX_BATCH_ITEMS
+
         items = [{"text": f"doc{i}", "source": f"s{i}"} for i in range(MAX_BATCH_ITEMS + 1)]
         resp = client.post("/knowledge/batch-upload", json={"items": items})
         assert resp.status_code == 422
@@ -340,12 +349,15 @@ class TestKnowledgeEndpoints:
                 RuntimeError("ChromaDB connection lost"),  # s2 失败
             ]
             mock.return_value.delete_by_ids.return_value = 3  # 回滚 s1 删除 3 个片段
-            resp = client.post("/knowledge/batch-upload", json={
-                "items": [
-                    {"text": "doc1 content", "source": "s1"},
-                    {"text": "doc2 content", "source": "s2"},
-                ]
-            })
+            resp = client.post(
+                "/knowledge/batch-upload",
+                json={
+                    "items": [
+                        {"text": "doc1 content", "source": "s1"},
+                        {"text": "doc2 content", "source": "s2"},
+                    ]
+                },
+            )
         assert resp.status_code == 200
         data = resp.json()
         # 应标记为失败并已回滚
@@ -366,12 +378,15 @@ class TestKnowledgeEndpoints:
             ]
             # 回滚 s1 也失败
             mock.return_value.delete_by_ids.side_effect = RuntimeError("rollback failed")
-            resp = client.post("/knowledge/batch-upload", json={
-                "items": [
-                    {"text": "doc1", "source": "s1"},
-                    {"text": "doc2", "source": "s2"},
-                ]
-            })
+            resp = client.post(
+                "/knowledge/batch-upload",
+                json={
+                    "items": [
+                        {"text": "doc1", "source": "s1"},
+                        {"text": "doc2", "source": "s2"},
+                    ]
+                },
+            )
         assert resp.status_code == 200
         data = resp.json()
         assert data["success"] is False
@@ -381,9 +396,7 @@ class TestKnowledgeEndpoints:
         """PUT /knowledge/update 应先删后增"""
         with patch("cayz_agent.rag.get_rag_manager") as mock:
             mock.return_value.update_document.return_value = 5
-            resp = client.put("/knowledge/update", json={
-                "source": "doc1", "text": "new content"
-            })
+            resp = client.put("/knowledge/update", json={"source": "doc1", "text": "new content"})
         assert resp.status_code == 200
         data = resp.json()
         assert data["success"] is True
@@ -406,6 +419,7 @@ class TestSessionEndpoints:
     def test_list_sessions(self, client):
         """GET /sessions 应返回会话列表"""
         from cayz_agent.session import SessionInfo
+
         with patch("cayz_agent.api.get_session_manager") as mock:
             # list_sessions 返回 (sessions, total) 元组
             mock.return_value.list_sessions.return_value = (
@@ -421,9 +435,7 @@ class TestSessionEndpoints:
     def test_get_session_detail_existing(self, client):
         """GET /sessions/{id} 存在的会话应返回详情"""
         with patch("cayz_agent.api.get_session_manager") as mock:
-            mock.return_value.get_session.return_value = {
-                "thread_id": "t1", "checkpoint_count": 3, "exists": True
-            }
+            mock.return_value.get_session.return_value = {"thread_id": "t1", "checkpoint_count": 3, "exists": True}
             resp = client.get("/sessions/t1")
         assert resp.status_code == 200
         data = resp.json()
@@ -477,9 +489,7 @@ class TestGlobalExceptionHandlers:
         # 关闭后才能拿到全局 handler 返回的 500 响应。
         client = TestClient(app, raise_server_exceptions=False)
         with patch("cayz_agent.api.get_session_manager") as mock:
-            mock.return_value.list_sessions.side_effect = RuntimeError(
-                "Internal token sk-abcdefghijklmnopqrst leaked"
-            )
+            mock.return_value.list_sessions.side_effect = RuntimeError("Internal token sk-abcdefghijklmnopqrst leaked")
             resp = client.get("/sessions")
         assert resp.status_code == 500
         data = resp.json()
@@ -492,9 +502,8 @@ class TestGlobalExceptionHandlers:
         client = TestClient(app, raise_server_exceptions=False)
         with patch("cayz_agent.api.get_session_manager") as mock:
             from fastapi import HTTPException
-            mock.return_value.list_sessions.side_effect = HTTPException(
-                status_code=418, detail="I am a teapot"
-            )
+
+            mock.return_value.list_sessions.side_effect = HTTPException(status_code=418, detail="I am a teapot")
             resp = client.get("/sessions")
         assert resp.status_code == 418
         assert resp.json()["detail"] == "I am a teapot"
@@ -636,6 +645,7 @@ class TestP1ScopeEnforcement:
     def test_write_can_upload_knowledge(self, client):
         """write Key 上传知识库不应被 scope 拦截（非 403）"""
         from unittest.mock import MagicMock
+
         with patch("cayz_agent.middleware.get_settings") as mock:
             for k, v in self._SETTINGS.items():
                 setattr(mock.return_value, k, v)
@@ -693,6 +703,7 @@ class TestP2KnowledgeSensitiveScan:
     def test_block_mode_rejects_sensitive_content(self, client):
         """block 模式下，包含敏感信息的文档应被拒绝（422）"""
         from unittest.mock import MagicMock
+
         with patch("cayz_agent.api.settings") as mock_s:
             mock_s.knowledge_sensitive_scan = "block"
             mock_rag = MagicMock()
@@ -708,6 +719,7 @@ class TestP2KnowledgeSensitiveScan:
     def test_warn_mode_allows_sensitive_content(self, client):
         """warn 模式下，包含敏感信息的文档仍允许上传"""
         from unittest.mock import MagicMock
+
         with patch("cayz_agent.api.settings") as mock_s:
             mock_s.knowledge_sensitive_scan = "warn"
             mock_rag = MagicMock()
@@ -722,6 +734,7 @@ class TestP2KnowledgeSensitiveScan:
     def test_off_mode_skips_scan(self, client):
         """off 模式下，不扫描敏感信息"""
         from unittest.mock import MagicMock
+
         with patch("cayz_agent.api.settings") as mock_s:
             mock_s.knowledge_sensitive_scan = "off"
             mock_rag = MagicMock()
@@ -743,8 +756,9 @@ class TestP2ErrorResponseConvergence:
             mock_s.auth_required = True
             # 触发 /chat 端点 try/except 捕获的异常
             # P0：/chat 改用 get_agent_app_for_scope(scope).invoke(...)，故 patch 该函数
-            with patch("cayz_agent.api.get_agent_app_for_scope",
-                       side_effect=RuntimeError("internal: /usr/lib/python3.13/path")):
+            with patch(
+                "cayz_agent.api.get_agent_app_for_scope", side_effect=RuntimeError("internal: /usr/lib/python3.13/path")
+            ):
                 resp = client.post("/chat", json={"message": "hello"})
         assert resp.status_code == 500
         detail = resp.json()["detail"]
@@ -757,8 +771,7 @@ class TestP2ErrorResponseConvergence:
         with patch("cayz_agent.api.settings") as mock_s:
             mock_s.auth_required = False
             # P0：/chat 改用 get_agent_app_for_scope(scope).invoke(...)，故 patch 该函数
-            with patch("cayz_agent.api.get_agent_app_for_scope",
-                       side_effect=RuntimeError("connection refused")):
+            with patch("cayz_agent.api.get_agent_app_for_scope", side_effect=RuntimeError("connection refused")):
                 resp = client.post("/chat", json={"message": "hello"})
         assert resp.status_code == 500
         detail = resp.json()["detail"]
@@ -809,10 +822,7 @@ class TestM1ThreadIdValidation:
         mock_llm.invoke.return_value = fake_response
 
         with patch("cayz_agent.graph.llm_with_tools", mock_llm):
-            resp = client.post("/chat", json={
-                "message": "你好",
-                "thread_id": "user-session-001"
-            })
+            resp = client.post("/chat", json={"message": "你好", "thread_id": "user-session-001"})
 
         assert resp.status_code == 200
         assert resp.json()["thread_id"] == "user-session-001"
@@ -826,45 +836,31 @@ class TestM1ThreadIdValidation:
     def test_long_thread_id_rejected(self, client):
         """过长 thread_id 应返回 422（防 DoS / 日志膨胀）"""
         from cayz_agent.validators import MAX_THREAD_ID_LENGTH
-        resp = client.post("/chat", json={
-            "message": "你好",
-            "thread_id": "a" * (MAX_THREAD_ID_LENGTH + 1)
-        })
+
+        resp = client.post("/chat", json={"message": "你好", "thread_id": "a" * (MAX_THREAD_ID_LENGTH + 1)})
         assert resp.status_code == 422
         assert "无效" in resp.json().get("detail", "")
 
     def test_thread_id_with_newline_rejected(self, client):
         """含换行符的 thread_id 应返回 422（防日志注入）"""
-        resp = client.post("/chat", json={
-            "message": "你好",
-            "thread_id": "valid-id\nfake-log"
-        })
+        resp = client.post("/chat", json={"message": "你好", "thread_id": "valid-id\nfake-log"})
         assert resp.status_code == 422
         assert "无效" in resp.json().get("detail", "")
 
     def test_thread_id_with_special_chars_rejected(self, client):
         """含特殊字符的 thread_id 应返回 422（防路径穿越 / SQL 注入）"""
         for bad_id in ["../etc/passwd", "id; DROP TABLE", "id with space", "id@host"]:
-            resp = client.post("/chat", json={
-                "message": "你好",
-                "thread_id": bad_id
-            })
+            resp = client.post("/chat", json={"message": "你好", "thread_id": bad_id})
             assert resp.status_code == 422, f"应拒绝: {bad_id}"
 
     def test_thread_id_with_unicode_rejected(self, client):
         """含中文的 thread_id 应返回 422"""
-        resp = client.post("/chat", json={
-            "message": "你好",
-            "thread_id": "会话-001"
-        })
+        resp = client.post("/chat", json={"message": "你好", "thread_id": "会话-001"})
         assert resp.status_code == 422
 
     def test_stream_endpoint_validates_thread_id(self, client):
         """流式端点也应校验 thread_id 格式"""
-        resp = client.post("/chat/stream", json={
-            "message": "你好",
-            "thread_id": "short"
-        })
+        resp = client.post("/chat/stream", json={"message": "你好", "thread_id": "short"})
         assert resp.status_code == 422
         assert "无效" in resp.json().get("detail", "")
 

@@ -27,19 +27,19 @@
 - "chat"：闲聊/通用问答/时间 → 通用 Agent
 - "business"：CRM 客户/订单查询、企业微信通知、邮件发送 → 业务集成 Agent
 """
+
 import logging
-from typing import Annotated, TypedDict, Literal
+from typing import Annotated, Literal, TypedDict
 
-from langgraph.graph import StateGraph, END
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
-from .llm import create_llm
-from .tools import AGENT_TOOLS
-from .config import get_settings
-from .monitor import record_route
 from .cache import get_llm_cache
 from .graph import build_checkpointer, log_token_usage
+from .llm import create_llm
+from .monitor import record_route
+from .tools import AGENT_TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -56,12 +56,14 @@ def _make_router_cache_key(user_message: str) -> str:
     路由判定只依赖用户消息内容（ROUTER_PROMPT 固定），因此可直接用 prompt+message 哈希。
     """
     import hashlib
+
     payload = f"{ROUTER_PROMPT}|{user_message}"
     return "router:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 class MultiAgentState(TypedDict):
     """多 Agent 共享状态"""
+
     messages: Annotated[list, add_messages]
     # 路由 Agent 输出的意图标签
     route: str

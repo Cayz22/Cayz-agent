@@ -4,13 +4,14 @@ llm 模块单元测试：验证多模型工厂
 - create_llm: 根据 LLM_PROVIDER 配置返回正确的 ChatOpenAI 实例
 - list_supported_providers: 返回支持的 provider 列表
 """
+
 from unittest.mock import patch
 
 import pytest
 from langchain_openai import ChatOpenAI
 
-from cayz_agent.llm import create_llm, list_supported_providers
 from cayz_agent.config import Settings
+from cayz_agent.llm import create_llm, list_supported_providers
 
 
 class TestListSupportedProviders:

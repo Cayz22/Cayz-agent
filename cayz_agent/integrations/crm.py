@@ -8,10 +8,9 @@ CRM 系统集成
 - 客户：ID、姓名、邮箱、电话、公司、等级、状态
 - 订单：订单号、客户ID、产品、金额、状态、下单日期
 """
+
 import logging
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Optional
+from dataclasses import dataclass
 
 from ..config import get_settings
 
@@ -21,6 +20,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Customer:
     """客户信息"""
+
     customer_id: str
     name: str
     email: str
@@ -33,6 +33,7 @@ class Customer:
 @dataclass
 class Order:
     """订单信息"""
+
     order_id: str
     customer_id: str
     product: str
@@ -94,7 +95,7 @@ class CRMClient:
                 "或继承 CRMClient 并实现 _fetch_from_api 方法对接真实 CRM 系统。"
             )
 
-    def get_customer(self, customer_id: str) -> Optional[Customer]:
+    def get_customer(self, customer_id: str) -> Customer | None:
         """根据客户ID查询客户信息"""
         logger.info("CRM 查询客户: %s", customer_id)
         customer = self._customers.get(customer_id)
@@ -112,15 +113,14 @@ class CRMClient:
 
         logger.info("CRM 搜索客户: keyword=%s", keyword)
         results = [
-            c for c in self._customers.values()
-            if keyword in c.name.lower()
-            or keyword in c.company.lower()
-            or keyword in c.email.lower()
+            c
+            for c in self._customers.values()
+            if keyword in c.name.lower() or keyword in c.company.lower() or keyword in c.email.lower()
         ]
         logger.info("CRM 搜索完成: 找到 %d 条结果", len(results))
         return results
 
-    def get_order(self, order_id: str) -> Optional[Order]:
+    def get_order(self, order_id: str) -> Order | None:
         """根据订单号查询订单详情"""
         logger.info("CRM 查询订单: %s", order_id)
         order = self._orders.get(order_id)
@@ -180,7 +180,7 @@ class CRMClient:
 
 
 # 全局单例
-_crm_client: Optional[CRMClient] = None
+_crm_client: CRMClient | None = None
 
 
 def get_crm_client() -> CRMClient:

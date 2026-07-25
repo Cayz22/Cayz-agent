@@ -4,23 +4,25 @@
 - retry_on_error: 对瞬时错误（网络/超时/限流/业务集成瞬时错误）自动重试
 - log_execution: 记录函数调用耗时与异常（同时记录工具调用监控指标）
 """
+
 import functools
 import logging
 import socket
 import time
-from typing import Callable, TypeVar
+from collections.abc import Callable
+from typing import TypeVar
 
 from tenacity import (
+    RetryCallState,
+    before_sleep_log,
     retry,
+    retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type,
-    before_sleep_log,
-    RetryCallState,
 )
 
+from .exceptions import CayzAgentError, EmailError, LLMRateLimitError, NotifyError, RAGConnectionError
 from .monitor import record_retry, record_tool_call
-from .exceptions import NotifyError, EmailError, RAGConnectionError, LLMRateLimitError, CayzAgentError
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +74,7 @@ def retry_on_error(max_attempts: int = 3, min_wait: float = 1.0, max_wait: float
         min_wait: 首次重试等待秒数
         max_wait: 最大等待秒数
     """
+
     def _on_retry(state: RetryCallState):
         """重试回调：仅在非首次尝试时记录重试指标"""
         if state.attempt_number > 1:
@@ -93,6 +96,7 @@ def log_execution(func: Callable[..., T]) -> Callable[..., T]:
 
     用于工具函数，便于监控调用性能。
     """
+
     @functools.wraps(func)
     def wrapper(*args, **kwargs) -> T:
         func_name = getattr(func, "__name__", str(func))

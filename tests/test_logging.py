@@ -4,6 +4,7 @@
 验证 text 和 json 两种格式的输出。
 直接测试 Formatter，避免 handler/stream 绑定问题。
 """
+
 import json
 import logging
 
@@ -80,6 +81,7 @@ class TestJsonFormatter:
             raise ValueError("boom")
         except ValueError:
             import sys
+
             exc_info = sys.exc_info()
 
         record = logging.LogRecord(
@@ -157,7 +159,7 @@ class TestSetupLogging:
 
     def test_json_format_creates_json_handler(self):
         """log_format=json 应注册 JSON formatter"""
-        from cayz_agent.config import setup_logging, _JsonFormatter
+        from cayz_agent.config import _JsonFormatter, setup_logging
 
         setup_logging(level="INFO", log_format="json")
 
@@ -168,15 +170,12 @@ class TestSetupLogging:
 
     def test_text_format_creates_text_handler(self):
         """log_format=text 应注册文本 formatter（非 JSON）"""
-        from cayz_agent.config import setup_logging, _JsonFormatter
+        from cayz_agent.config import _JsonFormatter, setup_logging
 
         setup_logging(level="INFO", log_format="text")
 
         root = logging.getLogger()
-        has_text = any(
-            h.formatter is not None and not isinstance(h.formatter, _JsonFormatter)
-            for h in root.handlers
-        )
+        has_text = any(h.formatter is not None and not isinstance(h.formatter, _JsonFormatter) for h in root.handlers)
         assert has_text
 
     def test_log_level_applied(self):

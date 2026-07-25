@@ -1,16 +1,17 @@
 """
 config 模块单元测试：验证配置加载、单例模式和日志初始化
 """
+
 import logging
 
 import pytest
 
 from cayz_agent.config import (
     Settings,
+    _JsonFormatter,
     get_settings,
     reset_settings_cache,
     setup_logging,
-    _JsonFormatter,
 )
 
 
@@ -71,6 +72,7 @@ class TestSettingsDefaults:
     def test_auth_required_default_true_without_env(self):
         """未设置 AUTH_REQUIRED 环境变量时，auth_required 默认应为 True（P0 安全）"""
         import os
+
         saved = os.environ.pop("AUTH_REQUIRED", None)
         try:
             reset_settings_cache()
@@ -97,11 +99,7 @@ class TestSetupLogging:
         root_logger = logging.getLogger()
         assert root_logger.level == logging.DEBUG
         # 验证至少有一个 handler 使用 _JsonFormatter
-        has_json_formatter = any(
-            isinstance(h.formatter, _JsonFormatter)
-            for h in root_logger.handlers
-            if h.formatter
-        )
+        has_json_formatter = any(isinstance(h.formatter, _JsonFormatter) for h in root_logger.handlers if h.formatter)
         assert has_json_formatter
 
     def test_invalid_level_defaults_to_info(self):
@@ -144,6 +142,7 @@ class TestJsonFormatter:
             raise ValueError("测试异常")
         except ValueError:
             import sys
+
             exc_info = sys.exc_info()
 
         record = logging.LogRecord(

@@ -1,6 +1,7 @@
 """
 中间件测试：API Key 鉴权 + 请求限流
 """
+
 from unittest.mock import patch
 
 import pytest
@@ -11,9 +12,9 @@ from cayz_agent.middleware import (
     APIKeyAuthMiddleware,
     RateLimitMiddleware,
     RequestBodyLimitMiddleware,
-    setup_middleware,
     _extract_api_key,
     _get_client_id,
+    setup_middleware,
 )
 
 
@@ -38,6 +39,7 @@ class TestExtractApiKey:
 
     def test_extract_from_bearer(self):
         from starlette.requests import Request
+
         scope = {
             "type": "http",
             "method": "GET",
@@ -48,6 +50,7 @@ class TestExtractApiKey:
 
     def test_extract_from_x_api_key(self):
         from starlette.requests import Request
+
         scope = {
             "type": "http",
             "method": "GET",
@@ -58,6 +61,7 @@ class TestExtractApiKey:
 
     def test_extract_returns_none_when_missing(self):
         from starlette.requests import Request
+
         scope = {"type": "http", "method": "GET", "headers": []}
         req = Request(scope)
         assert _extract_api_key(req) is None
@@ -298,6 +302,7 @@ class TestRateLimitSweep:
         mw = RateLimitMiddleware(app=FastAPI())
         # defaultdict 不会自动创建空 deque，但手动赋值可以模拟
         from collections import deque
+
         mw._hits["empty-client"] = deque()
         assert len(mw._hits) == 1
 
@@ -326,14 +331,18 @@ class TestRateLimitSweep:
         class _Req:
             class _url:
                 path = "/chat"
+
             url = _url()
+
             class _client:
                 host = "127.0.0.1"
+
             client = _client()
             headers = {}
 
         async def _call_next(req):
             from starlette.responses import JSONResponse
+
             return JSONResponse({"ok": True})
 
         with patch("cayz_agent.middleware.get_settings") as mock:
@@ -350,6 +359,7 @@ class TestP1ScopeResolution:
     def test_admin_key_resolves_to_admin(self):
         """管理员 Key（api_key）解析为 admin"""
         from cayz_agent.middleware import _resolve_scope
+
         with patch("cayz_agent.middleware.get_settings") as mock:
             mock.return_value.api_key = "admin-secret"
             mock.return_value.write_api_keys = "write-key"
@@ -359,6 +369,7 @@ class TestP1ScopeResolution:
     def test_write_key_resolves_to_write(self):
         """写权限 Key 解析为 write"""
         from cayz_agent.middleware import _resolve_scope
+
         with patch("cayz_agent.middleware.get_settings") as mock:
             mock.return_value.api_key = "admin-secret"
             mock.return_value.write_api_keys = "write-key, write-key-2"
@@ -368,6 +379,7 @@ class TestP1ScopeResolution:
     def test_readonly_key_resolves_to_readonly(self):
         """只读 Key 解析为 readonly"""
         from cayz_agent.middleware import _resolve_scope
+
         with patch("cayz_agent.middleware.get_settings") as mock:
             mock.return_value.api_key = "admin-secret"
             mock.return_value.write_api_keys = ""
@@ -377,6 +389,7 @@ class TestP1ScopeResolution:
     def test_invalid_key_resolves_to_none(self):
         """无效 Key 解析为 None"""
         from cayz_agent.middleware import _resolve_scope
+
         with patch("cayz_agent.middleware.get_settings") as mock:
             mock.return_value.api_key = "admin-secret"
             mock.return_value.write_api_keys = "write-key"
@@ -386,6 +399,7 @@ class TestP1ScopeResolution:
     def test_none_key_resolves_to_none(self):
         """未提供 Key 解析为 None"""
         from cayz_agent.middleware import _resolve_scope
+
         with patch("cayz_agent.middleware.get_settings") as mock:
             mock.return_value.api_key = "admin-secret"
             mock.return_value.write_api_keys = ""
@@ -399,6 +413,7 @@ class TestH1TimingSafeCompare:
     def test_admin_key_uses_compare_digest(self):
         """admin key 比较应走 hmac.compare_digest（功能正确性）"""
         from cayz_agent.middleware import _resolve_scope
+
         with patch("cayz_agent.middleware.get_settings") as mock:
             mock.return_value.api_key = "admin-secret-key"
             mock.return_value.write_api_keys = ""
@@ -411,6 +426,7 @@ class TestH1TimingSafeCompare:
     def test_admin_key_length_mismatch_safe(self):
         """长度不同的 key 应安全返回 None，不抛异常"""
         from cayz_agent.middleware import _resolve_scope
+
         with patch("cayz_agent.middleware.get_settings") as mock:
             mock.return_value.api_key = "admin-secret"
             mock.return_value.write_api_keys = ""
@@ -423,6 +439,7 @@ class TestH1TimingSafeCompare:
     def test_write_key_uses_constant_time_contains(self):
         """write key 比较应走 _constant_time_contains（功能正确性 + 多 key 匹配）"""
         from cayz_agent.middleware import _resolve_scope
+
         with patch("cayz_agent.middleware.get_settings") as mock:
             mock.return_value.api_key = "admin-secret"
             mock.return_value.write_api_keys = "write-key-1, write-key-2, write-key-3"
@@ -437,6 +454,7 @@ class TestH1TimingSafeCompare:
     def test_readonly_key_uses_constant_time_contains(self):
         """readonly key 比较应走 _constant_time_contains"""
         from cayz_agent.middleware import _resolve_scope
+
         with patch("cayz_agent.middleware.get_settings") as mock:
             mock.return_value.api_key = "admin-secret"
             mock.return_value.write_api_keys = ""
@@ -447,6 +465,7 @@ class TestH1TimingSafeCompare:
     def test_constant_time_contains_no_early_exit(self):
         """_constant_time_contains 遍历全部 key，匹配后仍继续比较（无短路）"""
         from cayz_agent.middleware import _constant_time_contains
+
         # 第 1 个就匹配，但函数应遍历完所有 3 个
         keys = ["match", "key2", "key3"]
         assert _constant_time_contains("match", keys) is True
@@ -460,6 +479,7 @@ class TestH1TimingSafeCompare:
     def test_constant_time_contains_length_mismatch(self):
         """_constant_time_contains 长度不同的候选应安全返回 False"""
         from cayz_agent.middleware import _constant_time_contains
+
         keys = ["exact-key"]
         assert _constant_time_contains("", keys) is False
         assert _constant_time_contains("x", keys) is False
@@ -468,6 +488,7 @@ class TestH1TimingSafeCompare:
     def test_scope_resolution_consistent_with_p1_behavior(self):
         """H1 修复后行为与 P1 一致：三级权限解析正确"""
         from cayz_agent.middleware import _resolve_scope
+
         with patch("cayz_agent.middleware.get_settings") as mock:
             mock.return_value.api_key = "admin-key"
             mock.return_value.write_api_keys = "write-key"
@@ -484,6 +505,7 @@ class TestH1TimingSafeCompare:
     def test_admin_key_partial_prefix_no_match(self):
         """admin key 前缀匹配不应通过（compare_digest 要求完全相等）"""
         from cayz_agent.middleware import _resolve_scope
+
         with patch("cayz_agent.middleware.get_settings") as mock:
             mock.return_value.api_key = "sk-admin-secret-123456"
             mock.return_value.write_api_keys = ""
@@ -502,6 +524,7 @@ class TestP1ForwardedHeaders:
     def test_real_ip_from_xff_when_trusted(self):
         """trust_forwarded_headers=True 时从 X-Forwarded-For 提取真实 IP"""
         from cayz_agent.middleware import _get_real_ip
+
         with patch("cayz_agent.middleware.get_settings") as mock:
             mock.return_value.trust_forwarded_headers = True
 
@@ -518,6 +541,7 @@ class TestP1ForwardedHeaders:
     def test_real_ip_from_x_real_ip(self):
         """无 X-Forwarded-For 时回退到 X-Real-IP"""
         from cayz_agent.middleware import _get_real_ip
+
         with patch("cayz_agent.middleware.get_settings") as mock:
             mock.return_value.trust_forwarded_headers = True
 
@@ -534,6 +558,7 @@ class TestP1ForwardedHeaders:
     def test_real_ip_ignored_when_not_trusted(self):
         """trust_forwarded_headers=False 时忽略转发头，使用直连 IP"""
         from cayz_agent.middleware import _get_real_ip
+
         with patch("cayz_agent.middleware.get_settings") as mock:
             mock.return_value.trust_forwarded_headers = False
 
@@ -738,10 +763,12 @@ class TestM3HTTPSRedirect:
             mock.return_value.rate_limit_per_minute = 0
             mock.return_value.force_https = True
             app = _build_test_app()
+
             # 添加 /health/deep 端点用于测试
             @app.get("/health/deep")
             async def health_deep():
                 return {"status": "ok"}
+
             client = TestClient(app)
             resp = client.get("/health/deep")
             assert resp.status_code == 200
@@ -806,6 +833,7 @@ class TestM3HTTPSRedirect:
             resp = client.post("/chat", follow_redirects=False)
             location = resp.headers["Location"]
             from urllib.parse import urlparse
+
             parsed = urlparse(location)
             assert parsed.scheme == "https"
 
@@ -994,13 +1022,13 @@ class TestM4UvicornHardening:
 
     def test_run_passes_timeout_keep_alive(self):
         """run() 应将 uvicorn_timeout_keep_alive 传给 uvicorn"""
-        with patch("uvicorn.run") as mock_run, \
-                patch("cayz_agent.api.settings") as mock_settings:
+        with patch("uvicorn.run") as mock_run, patch("cayz_agent.api.settings") as mock_settings:
             mock_settings.api_host = "0.0.0.0"
             mock_settings.api_port = 8000
             mock_settings.uvicorn_timeout_keep_alive = 5
             mock_settings.uvicorn_limit_concurrency = 100
             from cayz_agent.api import run
+
             run()
             mock_run.assert_called_once()
             call_kwargs = mock_run.call_args.kwargs
@@ -1008,39 +1036,39 @@ class TestM4UvicornHardening:
 
     def test_run_passes_limit_concurrency_when_positive(self):
         """limit_concurrency > 0 时应传给 uvicorn"""
-        with patch("uvicorn.run") as mock_run, \
-                patch("cayz_agent.api.settings") as mock_settings:
+        with patch("uvicorn.run") as mock_run, patch("cayz_agent.api.settings") as mock_settings:
             mock_settings.api_host = "0.0.0.0"
             mock_settings.api_port = 8000
             mock_settings.uvicorn_timeout_keep_alive = 5
             mock_settings.uvicorn_limit_concurrency = 200
             from cayz_agent.api import run
+
             run()
             call_kwargs = mock_run.call_args.kwargs
             assert call_kwargs["limit_concurrency"] == 200
 
     def test_run_omits_limit_concurrency_when_zero(self):
         """limit_concurrency=0 时不传该参数（uvicorn 默认不限制）"""
-        with patch("uvicorn.run") as mock_run, \
-                patch("cayz_agent.api.settings") as mock_settings:
+        with patch("uvicorn.run") as mock_run, patch("cayz_agent.api.settings") as mock_settings:
             mock_settings.api_host = "0.0.0.0"
             mock_settings.api_port = 8000
             mock_settings.uvicorn_timeout_keep_alive = 5
             mock_settings.uvicorn_limit_concurrency = 0
             from cayz_agent.api import run
+
             run()
             call_kwargs = mock_run.call_args.kwargs
             assert "limit_concurrency" not in call_kwargs
 
     def test_run_passes_host_and_port(self):
         """run() 应传 host/port 配置"""
-        with patch("uvicorn.run") as mock_run, \
-                patch("cayz_agent.api.settings") as mock_settings:
+        with patch("uvicorn.run") as mock_run, patch("cayz_agent.api.settings") as mock_settings:
             mock_settings.api_host = "127.0.0.1"
             mock_settings.api_port = 9000
             mock_settings.uvicorn_timeout_keep_alive = 5
             mock_settings.uvicorn_limit_concurrency = 100
             from cayz_agent.api import run
+
             run()
             call_kwargs = mock_run.call_args.kwargs
             assert call_kwargs["host"] == "127.0.0.1"

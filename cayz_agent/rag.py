@@ -8,12 +8,12 @@ RAG（检索增强生成）子系统
 4. 存储：持久化到 ChromaDB
 5. 检索：根据 query 向量检索 top_k 最相关文档片段
 """
+
 import hashlib
 import logging
 import os
 import threading
 import uuid
-from typing import Optional
 
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
@@ -21,7 +21,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from .cache import get_embedding_cache, get_rag_cache, invalidate_rag_cache
 from .config import get_settings
-from .exceptions import RAGConnectionError, RAGIngestError, RAGError
+from .exceptions import RAGConnectionError, RAGError, RAGIngestError
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ class CachedEmbeddings(Embeddings):
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         """批量向量化，逐条查缓存，未命中的批量调用底层。"""
-        results: list[Optional[list[float]]] = [None] * len(texts)
+        results: list[list[float] | None] = [None] * len(texts)
         miss_indices: list[int] = []
         miss_texts: list[str] = []
 
@@ -61,7 +61,7 @@ class CachedEmbeddings(Embeddings):
         if miss_texts:
             # 批量调用底层 Embeddings（一次 API 请求处理多个文本）
             new_vectors = self._underlying.embed_documents(miss_texts)
-            for idx, text, vec in zip(miss_indices, miss_texts, new_vectors):
+            for idx, text, vec in zip(miss_indices, miss_texts, new_vectors, strict=False):
                 results[idx] = vec
                 self._cache.set(self._key(text), vec)
 
@@ -102,6 +102,7 @@ class RAGManager:
         if provider == "ollama":
             try:
                 from langchain_ollama import OllamaEmbeddings
+
                 underlying = OllamaEmbeddings(
                     base_url=self._settings.ollama_base_url,
                     model=self._settings.embedding_model,
@@ -112,6 +113,7 @@ class RAGManager:
 
         # 默认使用 OpenAI Embeddings（DashScope 也兼容）
         from langchain_openai import OpenAIEmbeddings
+
         underlying = OpenAIEmbeddings(
             api_key=self._settings.openai_api_key,
             base_url=self._settings.openai_api_base,
@@ -122,12 +124,10 @@ class RAGManager:
     def _create_vectorstore(self):
         """创建或加载 ChromaDB 向量库"""
         try:
-            import chromadb
             from langchain_chroma import Chroma
         except ImportError as e:
             raise ImportError(
-                "chromadb 和 langchain-chroma 是 RAG 功能的必需依赖，"
-                "请运行: pip install chromadb langchain-chroma"
+                "chromadb 和 langchain-chroma 是 RAG 功能的必需依赖，" "请运行: pip install chromadb langchain-chroma"
             ) from e
 
         persist_dir = self._settings.chroma_persist_dir
@@ -143,7 +143,7 @@ class RAGManager:
     def add_documents(
         self,
         text: str,
-        metadata: Optional[dict] = None,
+        metadata: dict | None = None,
         source: str = "manual",
     ) -> int:
         """
@@ -162,7 +162,7 @@ class RAGManager:
     def add_documents_returning_ids(
         self,
         text: str,
-        metadata: Optional[dict] = None,
+        metadata: dict | None = None,
         source: str = "manual",
     ) -> list[str]:
         """
@@ -236,7 +236,7 @@ class RAGManager:
         if ext == ".pdf":
             text = self._load_pdf(file_path)
         elif ext in (".txt", ".md"):
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 text = f.read()
         else:
             raise ValueError(f"不支持的文件类型: {ext}（支持 .txt/.md/.pdf）")
@@ -251,9 +251,7 @@ class RAGManager:
             try:
                 from PyPDF2 import PdfReader  # type: ignore
             except ImportError as e:
-                raise ImportError(
-                    "加载 PDF 需要 pypdf 或 PyPDF2，请运行: pip install pypdf"
-                ) from e
+                raise ImportError("加载 PDF 需要 pypdf 或 PyPDF2，请运行: pip install pypdf") from e
 
         reader = PdfReader(file_path)
         texts = []
@@ -263,7 +261,7 @@ class RAGManager:
                 texts.append(text)
         return "\n\n".join(texts)
 
-    def search(self, query: str, top_k: Optional[int] = None) -> list[Document]:
+    def search(self, query: str, top_k: int | None = None) -> list[Document]:
         """
         检索与 query 最相关的文档片段
 
@@ -287,12 +285,15 @@ class RAGManager:
             logger.info("RAG 检索缓存命中: query='%s'", query[:50])
             # P3：缓存命中也记录检索指标（result_count 反映召回量）
             from .monitor import record_rag_search
+
             record_rag_search(success=True, latency=0.0, result_count=len(cached))
             return cached
 
         # P3：记录检索延迟与结果数（异常时也记录）
-        from .monitor import record_rag_search
         import time as _time
+
+        from .monitor import record_rag_search
+
         _start = _time.perf_counter()
         try:
             results = self._vectorstore.similarity_search(query, k=k)
@@ -306,9 +307,7 @@ class RAGManager:
             record_rag_search(success=False, latency=_latency, result_count=0)
             raise
 
-    def search_with_scores(
-        self, query: str, top_k: Optional[int] = None
-    ) -> list[tuple[Document, float]]:
+    def search_with_scores(self, query: str, top_k: int | None = None) -> list[tuple[Document, float]]:
         """检索并返回相关度分数"""
         if not query or not query.strip():
             return []
@@ -437,7 +436,7 @@ class RAGManager:
                 if meta and "source" in meta:
                     sources.add(meta["source"])
             return sorted(sources)
-        except Exception as e:
+        except Exception:
             logger.exception("列出文档来源失败")
             return []
 
@@ -478,7 +477,10 @@ class RAGManager:
 
         logger.info(
             "批量导入完成: %d 个文档, 成功 %d, 失败 %d, 共 %d 个片段",
-            len(items), len(succeeded), len(failed), total,
+            len(items),
+            len(succeeded),
+            len(failed),
+            total,
         )
         return {
             "total": total,
@@ -525,7 +527,9 @@ class RAGManager:
                 invalidate_rag_cache()
                 logger.info(
                     "更新文档: 已添加 %d 新片段, 已删除 %d 旧片段 (source=%s)",
-                    len(new_ids), len(old_ids), source,
+                    len(new_ids),
+                    len(old_ids),
+                    source,
                 )
             else:
                 logger.info("更新文档: 已添加 %d 新片段, 无旧片段需删除 (source=%s)", len(new_ids), source)
@@ -537,7 +541,7 @@ class RAGManager:
 
 
 # ===== 单例管理 =====
-_rag_manager: Optional[RAGManager] = None
+_rag_manager: RAGManager | None = None
 _rag_lock = threading.Lock()
 
 

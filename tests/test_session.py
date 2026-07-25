@@ -4,6 +4,7 @@
 测试 SessionManager 的列表、查询、删除功能。
 使用临时 SQLite 数据库模拟 LangGraph checkpointer 表。
 """
+
 import sqlite3
 import tempfile
 import time
@@ -12,7 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
-from cayz_agent.session import SessionManager, SessionInfo, get_session_manager
+from cayz_agent.session import SessionInfo, SessionManager, get_session_manager
 
 
 @pytest.fixture
@@ -51,6 +52,7 @@ def temp_db():
 
     # Windows 下文件可能被占用，重试几次
     import time as _time
+
     for _ in range(5):
         try:
             Path(db_path).unlink(missing_ok=True)
@@ -173,6 +175,7 @@ class TestTouchSession:
         manager.touch_session("thread-1")
         # 等待一小段时间后再次 touch
         import time as _time
+
         _time.sleep(0.05)
         manager.touch_session("thread-1")
 
@@ -221,6 +224,7 @@ class TestCleanupExpiredSessions:
 
         # 手动将 old-thread 的 last_active 设为很久以前
         import sqlite3 as _sqlite3
+
         conn = _sqlite3.connect(temp_db)
         conn.execute(
             "UPDATE session_activity SET last_active = ? WHERE thread_id = ?",
@@ -248,6 +252,7 @@ class TestCleanupExpiredSessions:
 
         # 设为过期
         import sqlite3 as _sqlite3
+
         conn = _sqlite3.connect(temp_db)
         conn.execute(
             "UPDATE session_activity SET last_active = ? WHERE thread_id = ?",
@@ -358,6 +363,7 @@ class TestGetSessionManager:
     def test_returns_singleton(self):
         # 重置单例
         import cayz_agent.session as session_mod
+
         session_mod._session_manager = None
 
         m1 = get_session_manager()

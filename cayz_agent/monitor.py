@@ -7,6 +7,7 @@
 
 不引入外部依赖，纯 Python 实现。
 """
+
 import logging
 import threading
 import time
@@ -21,9 +22,11 @@ logger = logging.getLogger(__name__)
 # 数据结构
 # ============================================================
 
+
 @dataclass
 class Counter:
     """单调递增计数器"""
+
     value: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -43,6 +46,7 @@ class Histogram:
     P0 修复：_bucket_counts 按桶下标存储「累计计数」（即 value <= b 的样本数），
     这与 Prometheus histogram 的语义一致；导出时直接输出，不再二次累加。
     """
+
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     count: int = 0
     total: float = 0.0
@@ -80,6 +84,7 @@ class Histogram:
 @dataclass
 class Gauge:
     """可增可减的指标"""
+
     value: float = 0.0
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -103,6 +108,7 @@ class Gauge:
 # ============================================================
 # 全局指标注册表
 # ============================================================
+
 
 class MetricsRegistry:
     """全局指标注册表，单例模式
@@ -199,6 +205,7 @@ def get_registry() -> MetricsRegistry:
 # ============================================================
 # 便捷记录函数
 # ============================================================
+
 
 def record_request(request_type: str = "chat", success: bool = True, latency: float = 0.0):
     """记录一次 API/对话请求"""
@@ -307,6 +314,7 @@ def record_cache_miss(cache_name: str):
 # P3 RAG 检索指标
 # ============================================================
 
+
 def record_rag_search(success: bool = True, latency: float = 0.0, result_count: int = 0):
     """记录一次 RAG 检索
 
@@ -329,13 +337,14 @@ def record_rag_search(success: bool = True, latency: float = 0.0, result_count: 
 # Prometheus 格式导出
 # ============================================================
 
+
 def _format_counter(name: str, help_text: str, value: int, labels: str = "") -> str:
     lines = [
         f"# HELP {name} {help_text}",
         f"# TYPE {name} counter",
     ]
     if labels:
-        lines.append(f'{name}{{{labels}}} {value}')
+        lines.append(f"{name}{{{labels}}} {value}")
     else:
         lines.append(f"{name} {value}")
     return "\n".join(lines)
@@ -346,6 +355,7 @@ def _format_histogram(name: str, help_text: str, stats: dict, labels: str = "") 
         f"# HELP {name} {help_text}",
         f"# TYPE {name} histogram",
     ]
+
     # P0 修复：stats["buckets"] 已是累计计数（value <= b 的样本数），直接输出，
     # 不再二次累加（旧代码 cumulative += ... 会导致指标严重夸大）
     # 按 bucket 上界数值升序输出
@@ -375,7 +385,7 @@ def _format_gauge(name: str, help_text: str, value: float, labels: str = "") -> 
         f"# TYPE {name} gauge",
     ]
     if labels:
-        lines.append(f'{name}{{{labels}}} {value}')
+        lines.append(f"{name}{{{labels}}} {value}")
     else:
         lines.append(f"{name} {value}")
     return "\n".join(lines)
@@ -392,148 +402,114 @@ def export_prometheus() -> str:
     parts = []
 
     # 请求指标
-    parts.append(_format_counter(
-        "cayz_requests_total", "Total number of requests", reg.requests_total.get()
-    ))
+    parts.append(_format_counter("cayz_requests_total", "Total number of requests", reg.requests_total.get()))
     # P2-16：list() 快照 keys，防止并发插入导致迭代异常
     for req_type in list(reg.requests_by_type.keys()):
         counter = reg.requests_by_type[req_type]
-        parts.append(_format_counter(
-            "cayz_requests_total", "Total number of requests",
-            counter.get(), f'type="{req_type}"'
-        ))
-    parts.append(_format_counter(
-        "cayz_request_errors_total", "Total number of failed requests",
-        reg.request_errors.get()
-    ))
-    parts.append(_format_histogram(
-        "cayz_request_latency_seconds", "Request latency distribution",
-        reg.request_latency.get_stats()
-    ))
+        parts.append(
+            _format_counter("cayz_requests_total", "Total number of requests", counter.get(), f'type="{req_type}"')
+        )
+    parts.append(
+        _format_counter("cayz_request_errors_total", "Total number of failed requests", reg.request_errors.get())
+    )
+    parts.append(
+        _format_histogram(
+            "cayz_request_latency_seconds", "Request latency distribution", reg.request_latency.get_stats()
+        )
+    )
 
     # Token 用量
-    parts.append(_format_counter(
-        "cayz_tokens_input_total", "Total input tokens consumed",
-        reg.tokens_input.get()
-    ))
-    parts.append(_format_counter(
-        "cayz_tokens_output_total", "Total output tokens consumed",
-        reg.tokens_output.get()
-    ))
-    parts.append(_format_counter(
-        "cayz_tokens_total", "Total tokens consumed",
-        reg.tokens_total.get()
-    ))
+    parts.append(_format_counter("cayz_tokens_input_total", "Total input tokens consumed", reg.tokens_input.get()))
+    parts.append(_format_counter("cayz_tokens_output_total", "Total output tokens consumed", reg.tokens_output.get()))
+    parts.append(_format_counter("cayz_tokens_total", "Total tokens consumed", reg.tokens_total.get()))
 
     # 工具调用
-    parts.append(_format_counter(
-        "cayz_tool_calls_total", "Total tool calls",
-        reg.tool_calls_total.get()
-    ))
+    parts.append(_format_counter("cayz_tool_calls_total", "Total tool calls", reg.tool_calls_total.get()))
     # P2-16：list() 快照
     for tool_name in list(reg.tool_calls_by_name.keys()):
         counter = reg.tool_calls_by_name[tool_name]
-        parts.append(_format_counter(
-            "cayz_tool_calls_total", "Total tool calls",
-            counter.get(), f'tool="{tool_name}"'
-        ))
-    parts.append(_format_counter(
-        "cayz_tool_call_errors_total", "Total tool call errors",
-        reg.tool_call_errors.get()
-    ))
-    parts.append(_format_histogram(
-        "cayz_tool_call_latency_seconds", "Tool call latency distribution",
-        reg.tool_call_latency.get_stats()
-    ))
+        parts.append(_format_counter("cayz_tool_calls_total", "Total tool calls", counter.get(), f'tool="{tool_name}"'))
+    parts.append(_format_counter("cayz_tool_call_errors_total", "Total tool call errors", reg.tool_call_errors.get()))
+    parts.append(
+        _format_histogram(
+            "cayz_tool_call_latency_seconds", "Tool call latency distribution", reg.tool_call_latency.get_stats()
+        )
+    )
 
     # 路由指标
     # P2-16：list() 快照
     for route in list(reg.route_counts.keys()):
         counter = reg.route_counts[route]
-        parts.append(_format_counter(
-            "cayz_route_total", "Total route decisions",
-            counter.get(), f'route="{route}"'
-        ))
+        parts.append(_format_counter("cayz_route_total", "Total route decisions", counter.get(), f'route="{route}"'))
 
     # 会话
-    parts.append(_format_gauge(
-        "cayz_active_sessions", "Number of active sessions",
-        reg.active_sessions.get()
-    ))
-    parts.append(_format_counter(
-        "cayz_sessions_deleted_total", "Total sessions deleted",
-        reg.sessions_deleted.get()
-    ))
+    parts.append(_format_gauge("cayz_active_sessions", "Number of active sessions", reg.active_sessions.get()))
+    parts.append(_format_counter("cayz_sessions_deleted_total", "Total sessions deleted", reg.sessions_deleted.get()))
     # P3：会话时长分布
-    parts.append(_format_histogram(
-        "cayz_session_duration_seconds", "Session duration distribution in seconds",
-        reg.session_duration.get_stats()
-    ))
+    parts.append(
+        _format_histogram(
+            "cayz_session_duration_seconds",
+            "Session duration distribution in seconds",
+            reg.session_duration.get_stats(),
+        )
+    )
 
     # 验证
-    parts.append(_format_counter(
-        "cayz_validation_failures_total", "Total input validation failures",
-        reg.validation_failures.get()
-    ))
+    parts.append(
+        _format_counter(
+            "cayz_validation_failures_total", "Total input validation failures", reg.validation_failures.get()
+        )
+    )
 
     # 重试
-    parts.append(_format_counter(
-        "cayz_retry_attempts_total", "Total retry attempts",
-        reg.retry_attempts.get()
-    ))
+    parts.append(_format_counter("cayz_retry_attempts_total", "Total retry attempts", reg.retry_attempts.get()))
 
     # 知识库
-    parts.append(_format_counter(
-        "cayz_knowledge_uploads_total", "Total knowledge document uploads",
-        reg.knowledge_uploads.get()
-    ))
-    parts.append(_format_counter(
-        "cayz_knowledge_deletes_total", "Total knowledge document deletes",
-        reg.knowledge_deletes.get()
-    ))
-    parts.append(_format_counter(
-        "cayz_knowledge_chunks_total", "Total knowledge chunks in vector store",
-        reg.knowledge_chunks_total.get()
-    ))
+    parts.append(
+        _format_counter("cayz_knowledge_uploads_total", "Total knowledge document uploads", reg.knowledge_uploads.get())
+    )
+    parts.append(
+        _format_counter("cayz_knowledge_deletes_total", "Total knowledge document deletes", reg.knowledge_deletes.get())
+    )
+    parts.append(
+        _format_counter(
+            "cayz_knowledge_chunks_total", "Total knowledge chunks in vector store", reg.knowledge_chunks_total.get()
+        )
+    )
     # P3：RAG 检索指标
-    parts.append(_format_counter(
-        "cayz_rag_searches_total", "Total RAG searches performed",
-        reg.rag_searches_total.get()
-    ))
-    parts.append(_format_counter(
-        "cayz_rag_search_errors_total", "Total RAG search errors",
-        reg.rag_search_errors.get()
-    ))
-    parts.append(_format_histogram(
-        "cayz_rag_search_latency_seconds", "RAG search latency distribution",
-        reg.rag_search_latency.get_stats()
-    ))
-    parts.append(_format_histogram(
-        "cayz_rag_search_results", "RAG search result count distribution",
-        reg.rag_search_results.get_stats()
-    ))
+    parts.append(
+        _format_counter("cayz_rag_searches_total", "Total RAG searches performed", reg.rag_searches_total.get())
+    )
+    parts.append(
+        _format_counter("cayz_rag_search_errors_total", "Total RAG search errors", reg.rag_search_errors.get())
+    )
+    parts.append(
+        _format_histogram(
+            "cayz_rag_search_latency_seconds", "RAG search latency distribution", reg.rag_search_latency.get_stats()
+        )
+    )
+    parts.append(
+        _format_histogram(
+            "cayz_rag_search_results", "RAG search result count distribution", reg.rag_search_results.get_stats()
+        )
+    )
 
     # 缓存指标
     # P2-16：list() 快照
     for cache_name in list(reg.cache_hits.keys()):
         counter = reg.cache_hits[cache_name]
-        parts.append(_format_counter(
-            "cayz_cache_hits_total", "Total cache hits",
-            counter.get(), f'cache="{cache_name}"'
-        ))
+        parts.append(
+            _format_counter("cayz_cache_hits_total", "Total cache hits", counter.get(), f'cache="{cache_name}"')
+        )
     for cache_name in list(reg.cache_misses.keys()):
         counter = reg.cache_misses[cache_name]
-        parts.append(_format_counter(
-            "cayz_cache_misses_total", "Total cache misses",
-            counter.get(), f'cache="{cache_name}"'
-        ))
+        parts.append(
+            _format_counter("cayz_cache_misses_total", "Total cache misses", counter.get(), f'cache="{cache_name}"')
+        )
 
     # 运行时长
     uptime = time.time() - reg.start_time
-    parts.append(_format_gauge(
-        "cayz_uptime_seconds", "Service uptime in seconds",
-        round(uptime, 2)
-    ))
+    parts.append(_format_gauge("cayz_uptime_seconds", "Service uptime in seconds", round(uptime, 2)))
 
     return "\n\n".join(parts) + "\n"
 

@@ -6,11 +6,11 @@
 
 使用标准库 smtplib + email，无需额外依赖。
 """
+
 import logging
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from typing import Optional
 
 from ..config import get_settings
 from ..exceptions import EmailError
@@ -56,6 +56,7 @@ class EmailSender:
         返回空集合表示不限制（仅开发环境推荐）。
         """
         from ..config import get_settings
+
         raw = get_settings().smtp_allowed_domains
         return {d.strip().lower() for d in raw.split(",") if d.strip()}
 
@@ -167,7 +168,7 @@ class EmailSender:
         except smtplib.SMTPException as e:
             # 瞬时性 SMTP 错误（如服务暂时不可用），可重试
             raise EmailError(f"SMTP 发送失败: {e}", cause=e, retryable=True) from e
-        except (ConnectionError, TimeoutError, OSError) as e:
+        except (ConnectionError, TimeoutError, OSError):
             # 网络层瞬时错误，直接 raise（已在 RETRYABLE_EXCEPTIONS 中）
             raise
         except Exception as e:
@@ -186,7 +187,7 @@ class EmailSender:
 
 
 # 全局单例
-_email_sender: Optional[EmailSender] = None
+_email_sender: EmailSender | None = None
 
 
 def get_email_sender() -> EmailSender:

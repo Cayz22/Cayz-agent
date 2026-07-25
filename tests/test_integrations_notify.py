@@ -1,7 +1,8 @@
 """
 企业微信通知集成模块单元测试
 """
-from unittest.mock import patch, MagicMock
+
+from unittest.mock import MagicMock, patch
 
 import pytest
 

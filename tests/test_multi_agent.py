@@ -6,23 +6,24 @@ multi_agent 模块单元测试：验证多 Agent 协作架构
 - create_multi_agent_graph: 图构建
 - should_continue_from_sub_agent: 条件路由
 """
-from unittest.mock import patch, MagicMock
+
+from unittest.mock import MagicMock, patch
 
 import pytest
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import END
 
 from cayz_agent.multi_agent import (
-    router_node,
-    knowledge_agent_node,
-    search_agent_node,
-    chat_agent_node,
-    business_agent_node,
-    should_continue_from_sub_agent,
-    route_after_router,
-    MultiAgentState,
-    create_multi_agent_graph,
     _VALID_ROUTES,
+    MultiAgentState,
+    business_agent_node,
+    chat_agent_node,
+    create_multi_agent_graph,
+    knowledge_agent_node,
+    route_after_router,
+    router_node,
+    search_agent_node,
+    should_continue_from_sub_agent,
 )
 
 
@@ -296,9 +297,10 @@ class TestCreateMultiAgentGraph:
         """图应能处理 chat 路由的消息（使用 mock）"""
         graph = create_multi_agent_graph()
 
-        with patch("cayz_agent.multi_agent._llm") as mock_llm, \
-             patch("cayz_agent.multi_agent._llm_with_tools") as mock_llm_tools:
-
+        with (
+            patch("cayz_agent.multi_agent._llm") as mock_llm,
+            patch("cayz_agent.multi_agent._llm_with_tools") as mock_llm_tools,
+        ):
             # 路由 Agent 返回 chat
             router_response = MagicMock()
             router_response.content = "chat"
@@ -318,9 +320,10 @@ class TestCreateMultiAgentGraph:
         """图应能处理 business 路由的消息（使用 mock）"""
         graph = create_multi_agent_graph()
 
-        with patch("cayz_agent.multi_agent._llm") as mock_llm, \
-             patch("cayz_agent.multi_agent._llm_with_tools") as mock_llm_tools:
-
+        with (
+            patch("cayz_agent.multi_agent._llm") as mock_llm,
+            patch("cayz_agent.multi_agent._llm_with_tools") as mock_llm_tools,
+        ):
             # 路由 Agent 返回 business
             router_response = MagicMock()
             router_response.content = "business"

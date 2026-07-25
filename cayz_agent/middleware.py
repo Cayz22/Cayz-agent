@@ -6,18 +6,18 @@ FastAPI 中间件：API Key 鉴权（含权限分级）+ 请求限流
   - P1 限流维度：支持 X-Forwarded-For / X-Real-IP 提取真实 IP（反向代理后）
 - RateLimiter：基于内存令牌桶，按客户端标识（API Key 或 IP）限流
 """
+
 import hashlib
 import hmac
 import time
 from collections import defaultdict, deque
 from threading import Lock
 
-from fastapi import Request, HTTPException
+from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse, Response
 
 from .config import get_settings
-
 
 # 仅轻量健康检查端点无需鉴权（用于 Docker healthcheck / 负载均衡探活 / K8s 探针）
 # /metrics /docs /redoc /openapi.json 均需鉴权，避免泄露内部信息
@@ -147,11 +147,7 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         # 判断是否配置了任意鉴权 Key（admin / write / readonly）
-        has_any_key = bool(
-            settings.api_key
-            or settings.write_api_keys.strip()
-            or settings.readonly_api_keys.strip()
-        )
+        has_any_key = bool(settings.api_key or settings.write_api_keys.strip() or settings.readonly_api_keys.strip())
 
         if has_any_key:
             provided = _extract_api_key(request)
@@ -474,12 +470,14 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
             request_id = incoming
         else:
             from .request_context import new_request_id
+
             request_id = new_request_id()
 
         # 注入 contextvars，下游日志自动携带
         # 注：BaseHTTPMiddleware 在 anyio task 中执行，call_next 可能切换上下文，
         # 故不保存 token reset（跨 task reset 会抛 TypeError）；改用 set(None) 清理
         from .request_context import set_request_id
+
         set_request_id(request_id)
 
         try:

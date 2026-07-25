@@ -11,6 +11,7 @@ P3 安全测试：验证 Docker 镜像依赖版本固定与供应链安全修复
 7. pyproject.toml 使用 ~= 兼容版本约束（非 >= 松散约束）
 8. Dockerfile 使用 requirements.lock 而非 requirements.txt
 """
+
 import re
 from pathlib import Path
 
@@ -60,9 +61,7 @@ class TestP3BaseImagePin:
             if ":" in image:
                 tag = image.split(":")[-1]
                 # tag 应包含完整的 patch 版本号（如 3.13.7-slim），不应是 3 或 3-slim
-                assert re.search(
-                    r"\d+\.\d+\.\d+", tag
-                ), f"基础镜像 {image} 的 tag '{tag}' 未固定到 patch 版本"
+                assert re.search(r"\d+\.\d+\.\d+", tag), f"基础镜像 {image} 的 tag '{tag}' 未固定到 patch 版本"
 
     def test_both_stages_use_same_pinned_version(self, dockerfile_content):
         """builder 和 runtime 阶段应使用相同的基础镜像版本"""
@@ -70,9 +69,7 @@ class TestP3BaseImagePin:
         images = [line.split(" AS ")[0].strip() for line in from_lines]
         # 所有阶段应使用相同的镜像版本
         unique_images = set(images)
-        assert len(unique_images) == 1, (
-            f"多阶段构建应使用相同基础镜像，实际：{unique_images}"
-        )
+        assert len(unique_images) == 1, f"多阶段构建应使用相同基础镜像，实际：{unique_images}"
 
 
 class TestP3MultiStageBuild:
@@ -106,9 +103,7 @@ class TestP3MultiStageBuild:
         assert len(pip_install_lines) > 0, "应至少有一条 pip install 命令"
         for line in pip_install_lines:
             if "--upgrade pip" not in line:
-                assert "--no-cache-dir" in line, (
-                    f"pip install 命令应包含 --no-cache-dir：{line.strip()}"
-                )
+                assert "--no-cache-dir" in line, f"pip install 命令应包含 --no-cache-dir：{line.strip()}"
 
 
 class TestP3NonRootUser:
@@ -120,9 +115,7 @@ class TestP3NonRootUser:
 
     def test_user_directive_present(self, dockerfile_content):
         """应有 USER 指令切换到非 root 用户"""
-        assert re.search(r"^USER\s+\S+", dockerfile_content, re.MULTILINE), (
-            "缺少 USER 指令，容器应以非 root 用户运行"
-        )
+        assert re.search(r"^USER\s+\S+", dockerfile_content, re.MULTILINE), "缺少 USER 指令，容器应以非 root 用户运行"
 
     def test_user_is_not_root(self, dockerfile_content):
         """USER 指令不应是 root"""
@@ -147,9 +140,7 @@ class TestP3RequirementsLock:
         """锁文件中所有依赖应使用 == 精确版本（非 >= 或 ~=）"""
         # 跳过注释行
         dep_lines = [
-            line.strip()
-            for line in lock_content.splitlines()
-            if line.strip() and not line.strip().startswith("#")
+            line.strip() for line in lock_content.splitlines() if line.strip() and not line.strip().startswith("#")
         ]
         assert len(dep_lines) > 50, f"锁文件依赖数量过少（{len(dep_lines)} 行），可能未正确生成"
         for line in dep_lines:
@@ -167,13 +158,9 @@ class TestP3RequirementsLock:
     def test_no_windows_paths(self, lock_content):
         """锁文件不应包含 Windows 路径（如 d:\\ 或 C:\\）"""
         # 跳过注释行
-        non_comment = [
-            line for line in lock_content.splitlines() if not line.strip().startswith("#")
-        ]
+        non_comment = [line for line in lock_content.splitlines() if not line.strip().startswith("#")]
         for line in non_comment:
-            assert not re.search(r"[A-Za-z]:[\\/]", line), (
-                f"锁文件不应包含 Windows 路径：{line}"
-            )
+            assert not re.search(r"[A-Za-z]:[\\/]", line), f"锁文件不应包含 Windows 路径：{line}"
 
     def test_no_dev_only_packages(self, lock_content):
         """锁文件不应包含 dev 专用工具（pytest/coverage/build 等）"""
@@ -182,9 +169,7 @@ class TestP3RequirementsLock:
             # 精确匹配包名行（不以 # 开头）
             for line in lock_content.splitlines():
                 if not line.strip().startswith("#"):
-                    assert not line.strip().startswith(pkg), (
-                        f"锁文件不应包含 dev 专用包：{line.strip()}"
-                    )
+                    assert not line.strip().startswith(pkg), f"锁文件不应包含 dev 专用包：{line.strip()}"
 
     def test_key_runtime_deps_present(self, lock_content):
         """锁文件应包含关键运行时依赖"""
@@ -207,9 +192,7 @@ class TestP3PyprojectConstraints:
     def test_no_loose_ge_constraints(self, pyproject_content):
         """pyproject.toml 运行时依赖不应使用 >= 松散约束"""
         # 提取 dependencies 列表部分
-        deps_match = re.search(
-            r"dependencies\s*=\s*\[(.*?)\]", pyproject_content, re.DOTALL
-        )
+        deps_match = re.search(r"dependencies\s*=\s*\[(.*?)\]", pyproject_content, re.DOTALL)
         assert deps_match, "未找到 dependencies 列表"
         deps_section = deps_match.group(1)
         # 检查每一行依赖声明
@@ -228,9 +211,7 @@ class TestP3PyprojectConstraints:
 
     def test_uses_compatible_release(self, pyproject_content):
         """pyproject.toml 应使用 ~= 兼容版本约束"""
-        deps_match = re.search(
-            r"dependencies\s*=\s*\[(.*?)\]", pyproject_content, re.DOTALL
-        )
+        deps_match = re.search(r"dependencies\s*=\s*\[(.*?)\]", pyproject_content, re.DOTALL)
         assert deps_match, "未找到 dependencies 列表"
         deps_section = deps_match.group(1)
         dep_lines = [
@@ -239,15 +220,13 @@ class TestP3PyprojectConstraints:
             if line.strip().startswith('"') and re.search(r'"([^"]+)"', line)
         ]
         tilde_count = sum(1 for d in dep_lines if "~=" in d)
-        assert tilde_count == len(dep_lines), (
-            f"所有运行时依赖应使用 ~= 约束，{tilde_count}/{len(dep_lines)} 个使用了 ~="
-        )
+        assert tilde_count == len(
+            dep_lines
+        ), f"所有运行时依赖应使用 ~= 约束，{tilde_count}/{len(dep_lines)} 个使用了 ~="
 
     def test_constraints_aligned_with_lock(self, pyproject_content, lock_content):
         """pyproject.toml 的 ~= 约束应与 requirements.lock 中实际版本兼容"""
-        deps_match = re.search(
-            r"dependencies\s*=\s*\[(.*?)\]", pyproject_content, re.DOTALL
-        )
+        deps_match = re.search(r"dependencies\s*=\s*\[(.*?)\]", pyproject_content, re.DOTALL)
         assert deps_match
         deps_section = deps_match.group(1)
         # 解析每个依赖的 ~= 约束
@@ -260,21 +239,19 @@ class TestP3PyprojectConstraints:
             # 提取包名
             pkg_name = full_dep.split("~=")[0].strip()
             # 从锁文件中查找该包的精确版本
-            lock_match = re.search(
-                rf"^{re.escape(pkg_name)}==([0-9.]+)", lock_content, re.MULTILINE
-            )
+            lock_match = re.search(rf"^{re.escape(pkg_name)}==([0-9.]+)", lock_content, re.MULTILINE)
             if lock_match:
                 lock_version = lock_match.group(1)
                 # ~=1.3.0 表示 >=1.3.0, <1.4.0；锁文件版本应在此范围内
                 constraint_parts = constraint_version.split(".")
                 lock_parts = lock_version.split(".")
                 # 至少 major.minor 应匹配
-                assert constraint_parts[0] == lock_parts[0], (
-                    f"{pkg_name}: ~= {constraint_version} 与锁定版本 {lock_version} major 版本不匹配"
-                )
-                assert constraint_parts[1] == lock_parts[1], (
-                    f"{pkg_name}: ~= {constraint_version} 与锁定版本 {lock_version} minor 版本不匹配"
-                )
+                assert (
+                    constraint_parts[0] == lock_parts[0]
+                ), f"{pkg_name}: ~= {constraint_version} 与锁定版本 {lock_version} major 版本不匹配"
+                assert (
+                    constraint_parts[1] == lock_parts[1]
+                ), f"{pkg_name}: ~= {constraint_version} 与锁定版本 {lock_version} minor 版本不匹配"
 
 
 class TestP3DockerfileUsesLock:
@@ -282,20 +259,16 @@ class TestP3DockerfileUsesLock:
 
     def test_dockerfile_copies_lock_file(self, dockerfile_content):
         """Dockerfile 应 COPY requirements.lock"""
-        assert "requirements.lock" in dockerfile_content, (
-            "Dockerfile 应使用 requirements.lock 而非 requirements.txt"
-        )
+        assert "requirements.lock" in dockerfile_content, "Dockerfile 应使用 requirements.lock 而非 requirements.txt"
 
     def test_dockerfile_installs_from_lock(self, dockerfile_content):
         """Dockerfile 应从 requirements.lock 安装依赖"""
-        assert "-r requirements.lock" in dockerfile_content, (
-            "Dockerfile 应从 requirements.lock 安装依赖"
-        )
+        assert "-r requirements.lock" in dockerfile_content, "Dockerfile 应从 requirements.lock 安装依赖"
 
     def test_dockerfile_does_not_use_requirements_txt(self, dockerfile_content):
         """Dockerfile 不应直接使用 requirements.txt 安装依赖"""
         # 不应出现 pip install -r requirements.txt
         assert "pip install" in dockerfile_content
-        assert "-r requirements.txt" not in dockerfile_content, (
-            "Dockerfile 不应从 requirements.txt 安装依赖（应使用 requirements.lock）"
-        )
+        assert (
+            "-r requirements.txt" not in dockerfile_content
+        ), "Dockerfile 不应从 requirements.txt 安装依赖（应使用 requirements.lock）"

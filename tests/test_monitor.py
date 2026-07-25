@@ -1,27 +1,28 @@
 """
 monitor 模块单元测试：验证指标收集与 Prometheus 导出
 """
+
 import pytest
 
 from cayz_agent.monitor import (
     Counter,
-    Histogram,
     Gauge,
+    Histogram,
     MetricsRegistry,
-    get_registry,
-    record_request,
-    record_token_usage,
-    record_tool_call,
-    record_route,
-    record_validation_failure,
-    record_retry,
-    record_session_start,
-    record_session_end,
-    record_session_deleted,
-    record_knowledge_upload,
-    record_knowledge_delete,
     export_prometheus,
     get_metrics_summary,
+    get_registry,
+    record_knowledge_delete,
+    record_knowledge_upload,
+    record_request,
+    record_retry,
+    record_route,
+    record_session_deleted,
+    record_session_end,
+    record_session_start,
+    record_token_usage,
+    record_tool_call,
+    record_validation_failure,
 )
 
 

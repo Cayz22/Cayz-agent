@@ -8,26 +8,27 @@ get_weather / get_exchange_rate / translate
 3. 外部信息查询类：API 未配置处理、参数校验、HTTP mock
 4. 权限分级：scope 与工具分配正确
 """
+
 import os
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from cayz_agent.tools import (
-    parse_pdf,
-    parse_excel,
-    parse_csv,
     generate_qrcode,
-    get_weather,
     get_exchange_rate,
-    translate,
     get_tools_for_scope,
+    get_weather,
+    parse_csv,
+    parse_excel,
+    parse_pdf,
+    translate,
 )
-
 
 # ============================================================
 # 1. parse_pdf 工具测试
 # ============================================================
+
 
 class TestParsePdf:
     """PDF 文本提取"""
@@ -89,6 +90,7 @@ class TestParsePdf:
 # ============================================================
 # 2. parse_excel 工具测试
 # ============================================================
+
 
 class TestParseExcel:
     """Excel 解析"""
@@ -157,6 +159,7 @@ class TestParseExcel:
 # 3. parse_csv 工具测试
 # ============================================================
 
+
 class TestParseCsv:
     """CSV 解析"""
 
@@ -184,7 +187,7 @@ class TestParseCsv:
         """UTF-8 BOM 编码的 CSV 应能正确解析"""
         csv_file = tmp_path / "bom.csv"
         # UTF-8 BOM + 中文内容
-        csv_file.write_bytes(b"\xef\xbb\xbf" + "姓名,年龄\n张三,25\n".encode("utf-8"))
+        csv_file.write_bytes(b"\xef\xbb\xbf" + "姓名,年龄\n张三,25\n".encode())
 
         with patch("cayz_agent.tools.get_settings") as mock:
             mock.return_value.tools_workspace_dir = str(tmp_path)
@@ -228,6 +231,7 @@ class TestParseCsv:
 # 4. generate_qrcode 工具测试
 # ============================================================
 
+
 class TestGenerateQrcode:
     """二维码生成"""
 
@@ -249,10 +253,7 @@ class TestGenerateQrcode:
         """有效数据应生成二维码图片"""
         with patch("cayz_agent.tools.get_settings") as mock:
             mock.return_value.tools_workspace_dir = str(tmp_path)
-            result = generate_qrcode.invoke({
-                "data": "https://example.com",
-                "file_path": "test_qr.png"
-            })
+            result = generate_qrcode.invoke({"data": "https://example.com", "file_path": "test_qr.png"})
             assert "已生成" in result
             assert (tmp_path / "test_qr.png").exists()
             # 文件大小应 > 0
@@ -262,10 +263,7 @@ class TestGenerateQrcode:
         """应自动创建父目录"""
         with patch("cayz_agent.tools.get_settings") as mock:
             mock.return_value.tools_workspace_dir = str(tmp_path)
-            result = generate_qrcode.invoke({
-                "data": "test",
-                "file_path": "sub/dir/qr.png"
-            })
+            result = generate_qrcode.invoke({"data": "test", "file_path": "sub/dir/qr.png"})
             assert "已生成" in result
             assert (tmp_path / "sub" / "dir" / "qr.png").exists()
 
@@ -273,16 +271,14 @@ class TestGenerateQrcode:
         """路径穿越应被拒绝"""
         with patch("cayz_agent.tools.get_settings") as mock:
             mock.return_value.tools_workspace_dir = str(tmp_path)
-            result = generate_qrcode.invoke({
-                "data": "test",
-                "file_path": "../../../etc/qr.png"
-            })
+            result = generate_qrcode.invoke({"data": "test", "file_path": "../../../etc/qr.png"})
             assert "越界" in result
 
 
 # ============================================================
 # 5. get_weather 工具测试
 # ============================================================
+
 
 class TestGetWeather:
     """天气查询"""
@@ -330,8 +326,7 @@ class TestGetWeather:
         # 第一次调用返回 geo，第二次返回 weather
         mock_client.get = MagicMock(side_effect=[geo_response, weather_response])
 
-        with patch("httpx.Client", return_value=mock_client), \
-             patch("cayz_agent.tools.get_settings") as mock_settings:
+        with patch("httpx.Client", return_value=mock_client), patch("cayz_agent.tools.get_settings") as mock_settings:
             mock_settings.return_value.weather_api_key = "test_key"
             mock_settings.return_value.weather_api_base = "https://devapi.qweather.com/v7"
             result = get_weather.invoke({"location": "北京"})
@@ -351,8 +346,7 @@ class TestGetWeather:
         mock_client.__exit__ = MagicMock(return_value=False)
         mock_client.get = MagicMock(return_value=geo_response)
 
-        with patch("httpx.Client", return_value=mock_client), \
-             patch("cayz_agent.tools.get_settings") as mock_settings:
+        with patch("httpx.Client", return_value=mock_client), patch("cayz_agent.tools.get_settings") as mock_settings:
             mock_settings.return_value.weather_api_key = "test_key"
             result = get_weather.invoke({"location": "不存在的城市"})
 
@@ -362,6 +356,7 @@ class TestGetWeather:
 # ============================================================
 # 6. get_exchange_rate 工具测试
 # ============================================================
+
 
 class TestGetExchangeRate:
     """汇率查询"""
@@ -393,8 +388,7 @@ class TestGetExchangeRate:
         mock_client.__exit__ = MagicMock(return_value=False)
         mock_client.get = MagicMock(return_value=response)
 
-        with patch("httpx.Client", return_value=mock_client), \
-             patch("cayz_agent.tools.get_settings") as mock_settings:
+        with patch("httpx.Client", return_value=mock_client), patch("cayz_agent.tools.get_settings") as mock_settings:
             mock_settings.return_value.exchange_rate_api_key = "test_key"
             mock_settings.return_value.exchange_rate_api_base = "https://data.fixer.io/api"
             result = get_exchange_rate.invoke({"base": "USD", "target": "CNY"})
@@ -418,8 +412,7 @@ class TestGetExchangeRate:
         mock_client.__exit__ = MagicMock(return_value=False)
         mock_client.get = MagicMock(return_value=response)
 
-        with patch("httpx.Client", return_value=mock_client), \
-             patch("cayz_agent.tools.get_settings") as mock_settings:
+        with patch("httpx.Client", return_value=mock_client), patch("cayz_agent.tools.get_settings") as mock_settings:
             mock_settings.return_value.exchange_rate_api_key = "test_key"
             result = get_exchange_rate.invoke({"base": "USD", "target": "CNY"})
 
@@ -429,6 +422,7 @@ class TestGetExchangeRate:
 # ============================================================
 # 7. translate 工具测试
 # ============================================================
+
 
 class TestTranslate:
     """翻译"""
@@ -457,9 +451,7 @@ class TestTranslate:
         response.json.return_value = {
             "from": "en",
             "to": "zh",
-            "trans_result": [
-                {"src": "hello", "dst": "你好"}
-            ],
+            "trans_result": [{"src": "hello", "dst": "你好"}],
         }
         response.raise_for_status = MagicMock()
 
@@ -468,8 +460,7 @@ class TestTranslate:
         mock_client.__exit__ = MagicMock(return_value=False)
         mock_client.get = MagicMock(return_value=response)
 
-        with patch("httpx.Client", return_value=mock_client), \
-             patch("cayz_agent.tools.get_settings") as mock_settings:
+        with patch("httpx.Client", return_value=mock_client), patch("cayz_agent.tools.get_settings") as mock_settings:
             mock_settings.return_value.baidu_translate_app_id = "test_id"
             mock_settings.return_value.baidu_translate_api_key = "test_key"
             result = translate.invoke({"text": "hello", "to_lang": "zh"})
@@ -491,8 +482,7 @@ class TestTranslate:
         mock_client.__exit__ = MagicMock(return_value=False)
         mock_client.get = MagicMock(return_value=response)
 
-        with patch("httpx.Client", return_value=mock_client), \
-             patch("cayz_agent.tools.get_settings") as mock_settings:
+        with patch("httpx.Client", return_value=mock_client), patch("cayz_agent.tools.get_settings") as mock_settings:
             mock_settings.return_value.baidu_translate_app_id = "test_id"
             mock_settings.return_value.baidu_translate_api_key = "test_key"
             result = translate.invoke({"text": "hello"})
@@ -504,6 +494,7 @@ class TestTranslate:
 # ============================================================
 # 8. 权限分级测试
 # ============================================================
+
 
 class TestToolScopePermissionsTier2:
     """第二梯队工具权限分级"""
@@ -537,9 +528,13 @@ class TestToolScopePermissionsTier2:
         tools = get_tools_for_scope("admin")
         tool_names = {t.name for t in tools}
         tier2_tools = [
-            "parse_pdf", "parse_excel", "parse_csv",
+            "parse_pdf",
+            "parse_excel",
+            "parse_csv",
             "generate_qrcode",
-            "get_weather", "get_exchange_rate", "translate",
+            "get_weather",
+            "get_exchange_rate",
+            "translate",
         ]
         for tool_name in tier2_tools:
             assert tool_name in tool_names, f"{tool_name} 不在 admin scope"

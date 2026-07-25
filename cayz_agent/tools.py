@@ -1,29 +1,27 @@
 """Agent 工具集：时间查询 + 联网搜索 + 知识库检索（RAG）+ 业务系统集成"""
+
 import logging
 import threading
-import time
 from datetime import datetime
-from typing import Optional
 
 from langchain_core.tools import tool
 from tavily import TavilyClient
 
 from .config import get_settings
-from .retry import retry_on_error, log_execution
+from .retry import log_execution, retry_on_error
 from .sanitizers import sanitize_exception
-from .validators import validate_search_query, InputValidationError
-from .monitor import record_tool_call
+from .validators import InputValidationError, validate_search_query
 
 logger = logging.getLogger(__name__)
 
 
 # P1 性能：Tavily client 单例化，避免每次 web_search 都新建 client（含内部 httpx client）
 # TavilyClient 内部维护 httpx.Client，复用可减少 TCP+TLS 握手开销
-_tavily_client: Optional[TavilyClient] = None
+_tavily_client: TavilyClient | None = None
 _tavily_client_lock = threading.Lock()
 
 
-def get_tavily_client() -> Optional[TavilyClient]:
+def get_tavily_client() -> TavilyClient | None:
     """获取 Tavily client 单例（线程安全）。
 
     未配置 TAVILY_API_KEY 时返回 None。
@@ -85,11 +83,7 @@ def web_search(query: str):
         # 格式化输出
         formatted_results = []
         for r in response["results"]:
-            formatted_results.append(
-                f"标题: {r['title']}\n"
-                f"摘要: {r['content']}\n"
-                f"链接: {r['url']}"
-            )
+            formatted_results.append(f"标题: {r['title']}\n" f"摘要: {r['content']}\n" f"链接: {r['url']}")
 
         search_result = "\n\n".join(formatted_results)
         logger.info("搜索完成，返回 %d 条结果", len(response["results"]))
@@ -123,6 +117,7 @@ def knowledge_search(query: str):
 
     try:
         from .rag import get_rag_manager
+
         manager = get_rag_manager()
         results = manager.search(query)
 
@@ -134,9 +129,7 @@ def knowledge_search(query: str):
         formatted = []
         for i, doc in enumerate(results, 1):
             source = doc.metadata.get("source", "未知来源")
-            formatted.append(
-                f"【片段 {i}】(来源: {source})\n{doc.page_content}"
-            )
+            formatted.append(f"【片段 {i}】(来源: {source})\n{doc.page_content}")
 
         logger.info("知识库检索完成: query='%s', 返回 %d 个片段", query[:50], len(results))
         return "\n\n".join(formatted)
@@ -164,8 +157,9 @@ def knowledge_upload(text: str, source: str = "user_input"):
     try:
         # P0 修复：工具内补齐输入校验与敏感检测，与 HTTP /knowledge/upload 端点保持一致
         # 防止通过 LLM 工具调用绕过 HTTP 层的输入校验
-        from .validators import validate_knowledge_text
         from .api import _scan_knowledge_sensitive
+        from .validators import validate_knowledge_text
+
         try:
             clean_text = validate_knowledge_text(text)
         except Exception as e:
@@ -173,6 +167,7 @@ def knowledge_upload(text: str, source: str = "user_input"):
         _scan_knowledge_sensitive(clean_text, source=source)
 
         from .rag import get_rag_manager
+
         manager = get_rag_manager()
         count = manager.add_documents(clean_text, source=source)
 
@@ -202,6 +197,7 @@ def crm_query_customer(customer_id: str):
     """
     try:
         from .integrations import get_crm_client
+
         client = get_crm_client()
         summary = client.get_customer_summary(customer_id)
 
@@ -209,10 +205,13 @@ def crm_query_customer(customer_id: str):
             return f"❌ {summary['error']}"
 
         c = summary["customer"]
-        orders_text = "\n".join(
-            f"  - {o['order_id']}: {o['product']} | ¥{o['amount']:.2f} | {o['status']} | {o['date']}"
-            for o in summary["recent_orders"]
-        ) or "  无订单记录"
+        orders_text = (
+            "\n".join(
+                f"  - {o['order_id']}: {o['product']} | ¥{o['amount']:.2f} | {o['status']} | {o['date']}"
+                for o in summary["recent_orders"]
+            )
+            or "  无订单记录"
+        )
 
         return (
             f"📋 客户信息\n"
@@ -252,6 +251,7 @@ def crm_search_customers(keyword: str):
 
     try:
         from .integrations import get_crm_client
+
         client = get_crm_client()
         results = client.search_customers(keyword)
 
@@ -260,9 +260,7 @@ def crm_search_customers(keyword: str):
 
         lines = [f"找到 {len(results)} 位匹配客户:\n"]
         for c in results:
-            lines.append(
-                f"  - {c.customer_id} | {c.name} | {c.company} | {c.level} | {c.status}"
-            )
+            lines.append(f"  - {c.customer_id} | {c.name} | {c.company} | {c.level} | {c.status}")
         return "\n".join(lines)
 
     except Exception as e:
@@ -283,6 +281,7 @@ def crm_query_order(order_id: str):
     """
     try:
         from .integrations import get_crm_client
+
         client = get_crm_client()
         order = client.get_order(order_id)
 
@@ -318,6 +317,7 @@ def send_wecom_notification(message: str, msg_type: str = "text"):
     """
     try:
         from .integrations import get_notifier
+
         notifier = get_notifier()
 
         if msg_type.lower() == "markdown":
@@ -353,6 +353,7 @@ def send_email(to: str, subject: str, body: str, html: bool = False):
     """
     try:
         from .integrations import get_email_sender
+
         sender = get_email_sender()
 
         to_addrs = [addr.strip() for addr in to.split(",") if addr.strip()]
@@ -385,9 +386,19 @@ import operator as _operator
 # 不允许：Call（函数调用）、Attribute（属性访问）、Subscript（下标）、Import 等
 # 注：ast.Num 已弃用（Python 3.8+ 用 ast.Constant），仅保留 Constant
 _CALC_ALLOWED_NODES = {
-    _ast.Expression, _ast.BinOp, _ast.UnaryOp, _ast.Constant,
-    _ast.Add, _ast.Sub, _ast.Mult, _ast.Div, _ast.FloorDiv,
-    _ast.Mod, _ast.Pow, _ast.USub, _ast.UAdd,
+    _ast.Expression,
+    _ast.BinOp,
+    _ast.UnaryOp,
+    _ast.Constant,
+    _ast.Add,
+    _ast.Sub,
+    _ast.Mult,
+    _ast.Div,
+    _ast.FloorDiv,
+    _ast.Mod,
+    _ast.Pow,
+    _ast.USub,
+    _ast.UAdd,
 }
 _CALC_OPERATORS = {
     _ast.Add: _operator.add,
@@ -403,6 +414,7 @@ _CALC_OPERATORS = {
 
 # 数学常量白名单（不允许访问 math 模块，仅暴露常用常量）
 import math as _math
+
 _CALC_CONSTANTS = {
     "pi": _math.pi,
     "e": _math.e,
@@ -488,6 +500,7 @@ def calculate(expression: str) -> str:
 
 # ---- 11.2 fetch_url：网页内容抓取 ----
 
+
 @tool
 def fetch_url(url: str) -> str:
     """抓取指定 URL 的网页正文内容，自动去除 HTML 标签和导航栏等噪音。
@@ -531,22 +544,25 @@ def fetch_url(url: str) -> str:
 
             content = resp.text
             if len(content) > settings.tools_fetch_url_max_size:
-                content = content[:settings.tools_fetch_url_max_size]
+                content = content[: settings.tools_fetch_url_max_size]
 
         # 提取正文：优先用 readability-lxml，回退到粗暴去标签
         try:
             from readability import Document
+
             doc = Document(content)
             title = doc.short_title() or ""
             text = doc.summary()
             # 去 HTML 标签
             import re
+
             text = re.sub(r"<[^>]+>", " ", text)
             text = re.sub(r"\s+", " ", text).strip()
             result = f"标题: {title}\n\n{text}" if title else text
         except ImportError:
             # readability 未安装，回退到粗暴去标签
             import re
+
             text = re.sub(r"<script[^>]*>.*?</script>", "", content, flags=re.DOTALL | re.IGNORECASE)
             text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL | re.IGNORECASE)
             text = re.sub(r"<[^>]+>", " ", text)
@@ -569,7 +585,8 @@ def fetch_url(url: str) -> str:
 
 # ---- 11.3 read_file / write_file：文件读写（路径白名单）----
 
-def _validate_workspace_path(file_path: str, must_exist: bool = False) -> "Path":
+
+def _validate_workspace_path(file_path: str, must_exist: bool = False):
     """校验文件路径是否在 workspace 目录内，返回绝对 Path 对象
 
     防越权核心：通过 resolve() 解析符号链接后，检查是否在 workspace 内
@@ -685,6 +702,7 @@ def write_file(file_path: str, content: str) -> str:
 
 # ---- 11.4 python_repl：受控 Python 执行 ----
 
+
 @tool
 def python_repl(code: str) -> str:
     """在受限沙箱中执行 Python 代码，返回 stdout 输出。
@@ -711,10 +729,21 @@ def python_repl(code: str) -> str:
 
     # 危险关键字黑名单（pre-check，主防护靠沙箱内置 __builtins__）
     _DANGEROUS = (
-        "import ", "import(", "__import__", "__builtins__",
-        "subprocess", "os.system", "os.popen", "os.exec",
-        "open(", "exec(", "eval(", "compile(",
-        "globals(", "locals(", "vars(",
+        "import ",
+        "import(",
+        "__import__",
+        "__builtins__",
+        "subprocess",
+        "os.system",
+        "os.popen",
+        "os.exec",
+        "open(",
+        "exec(",
+        "eval(",
+        "compile(",
+        "globals(",
+        "locals(",
+        "vars(",
     )
     code_lower = code.lower()
     for kw in _DANGEROUS:
@@ -723,30 +752,57 @@ def python_repl(code: str) -> str:
 
     import io
     import signal
-    from contextlib import redirect_stdout, redirect_stderr
+    from contextlib import redirect_stderr, redirect_stdout
 
     # 受限内建：仅暴露安全函数
     _SAFE_BUILTINS = {
-        "print": print, "len": len, "range": range, "enumerate": enumerate,
-        "zip": zip, "map": map, "filter": filter, "sum": sum, "min": min,
-        "max": max, "abs": abs, "round": round, "sorted": sorted,
-        "reversed": reversed, "list": list, "dict": dict, "set": set,
-        "tuple": tuple, "str": str, "int": int, "float": float, "bool": bool,
-        "type": type, "isinstance": isinstance, "all": all, "any": any,
-        "True": True, "False": False, "None": None,
+        "print": print,
+        "len": len,
+        "range": range,
+        "enumerate": enumerate,
+        "zip": zip,
+        "map": map,
+        "filter": filter,
+        "sum": sum,
+        "min": min,
+        "max": max,
+        "abs": abs,
+        "round": round,
+        "sorted": sorted,
+        "reversed": reversed,
+        "list": list,
+        "dict": dict,
+        "set": set,
+        "tuple": tuple,
+        "str": str,
+        "int": int,
+        "float": float,
+        "bool": bool,
+        "type": type,
+        "isinstance": isinstance,
+        "all": all,
+        "any": any,
+        "True": True,
+        "False": False,
+        "None": None,
     }
     # 允许的模块（预先 import，注入到 globals）
-    import math
-    import statistics
-    import json
-    import re
+    import collections
     import datetime
     import itertools
-    import collections
+    import json
+    import math
+    import re
+    import statistics
+
     _SAFE_GLOBALS = {
         "__builtins__": _SAFE_BUILTINS,
-        "math": math, "statistics": statistics, "json": json,
-        "re": re, "datetime": datetime, "itertools": itertools,
+        "math": math,
+        "statistics": statistics,
+        "json": json,
+        "re": re,
+        "datetime": datetime,
+        "itertools": itertools,
         "collections": collections,
     }
 
@@ -760,8 +816,10 @@ def python_repl(code: str) -> str:
     # 信号超时（仅 Unix 有效，Windows 用线程兜底）
     try:
         if hasattr(signal, "SIGALRM"):
+
             def _handler(signum, frame):
                 raise TimeoutError(f"执行超时（{timeout}s）")
+
             old = signal.signal(signal.SIGALRM, _handler)
             signal.setitimer(signal.ITIMER_REAL, timeout)
             try:
@@ -772,10 +830,12 @@ def python_repl(code: str) -> str:
         else:
             # Windows：用 threading.Timer 兜底（无法强杀线程，仅作提示）
             import threading
+
             timed_out = {"flag": False}
 
             def _watchdog():
                 timed_out["flag"] = True
+
             timer = threading.Timer(timeout, _watchdog)
             timer.start()
             try:
@@ -799,6 +859,7 @@ def python_repl(code: str) -> str:
 
 
 # ---- 11.5 parse_pdf / parse_excel / parse_csv：文件解析工具 ----
+
 
 @tool
 def parse_pdf(file_path: str) -> str:
@@ -988,6 +1049,7 @@ def parse_csv(file_path: str, delimiter: str = ",") -> str:
 
 # ---- 11.6 generate_qrcode：二维码生成（离线）----
 
+
 @tool
 def generate_qrcode(data: str, file_path: str = "qrcode.png") -> str:
     """生成二维码图片并保存到 workspace 目录。
@@ -1035,6 +1097,7 @@ def generate_qrcode(data: str, file_path: str = "qrcode.png") -> str:
 
 
 # ---- 11.7 get_weather / get_exchange_rate / translate：外部信息查询 ----
+
 
 @tool
 def get_weather(location: str) -> str:
@@ -1161,11 +1224,7 @@ def get_exchange_rate(base: str = "USD", target: str = "CNY") -> str:
             # fixer.io 基准为 EUR，需换算：1 base = rates[target] / rates[base] target
             rate = rates[target] / rates[base]
             date = data.get("date", "未知")
-            result = (
-                f"汇率（{date}）:\n"
-                f"1 {base} = {rate:.4f} {target}\n"
-                f"1 {target} = {1 / rate:.4f} {base}"
-            )
+            result = f"汇率（{date}）:\n" f"1 {base} = {rate:.4f} {target}\n" f"1 {target} = {1 / rate:.4f} {base}"
             return result
     except httpx.HTTPStatusError as e:
         return f"HTTP 错误: {e.response.status_code}"
@@ -1205,9 +1264,10 @@ def translate(text: str, from_lang: str = "auto", to_lang: str = "zh") -> str:
     if not app_id or not api_key:
         return "错误：翻译服务未配置（BAIDU_TRANSLATE_APP_ID/API_KEY 未设置）"
 
-    import httpx
-    import random
     import hashlib
+    import random
+
+    import httpx
 
     # 百度翻译 API 签名：md5(appid + q + salt + key)
     salt = str(random.randint(32768, 65536))
@@ -1253,6 +1313,7 @@ def translate(text: str, from_lang: str = "auto", to_lang: str = "zh") -> str:
 
 # ---- 11.8 hash_encode / text_diff / regex_test / unit_convert：离线基础工具 ----
 
+
 @tool
 def hash_encode(text: str, algorithm: str = "md5") -> str:
     """计算文本的哈希值或进行编码转换。
@@ -1281,6 +1342,7 @@ def hash_encode(text: str, algorithm: str = "md5") -> str:
         # 哈希算法
         if algorithm in ("md5", "sha1", "sha256", "sha512"):
             import hashlib
+
             h = hashlib.new(algorithm)
             h.update(text.encode("utf-8"))
             return h.hexdigest()
@@ -1288,17 +1350,21 @@ def hash_encode(text: str, algorithm: str = "md5") -> str:
         # Base64 编解码
         if algorithm == "base64":
             import base64
+
             return base64.b64encode(text.encode("utf-8")).decode("ascii")
         if algorithm == "base64_decode":
             import base64
+
             return base64.b64decode(text).decode("utf-8")
 
         # URL 编解码
         if algorithm == "url_encode":
             from urllib.parse import quote
+
             return quote(text, safe="")
         if algorithm == "url_decode":
             from urllib.parse import unquote
+
             return unquote(text)
 
         # Hex 编解码
@@ -1348,7 +1414,8 @@ def text_diff(text1: str, text2: str, lines_per_context: int = 3) -> str:
     n = max(1, min(int(lines_per_context), 10))
 
     diff = difflib.unified_diff(
-        lines1, lines2,
+        lines1,
+        lines2,
         fromfile="原始",
         tofile="修改后",
         n=n,
@@ -1469,22 +1536,47 @@ def unit_convert(value: float, from_unit: str, to_unit: str, category: str = "le
     # 基准单位：length=m, weight=kg, temperature=C, time=s, data=B
     conversion_tables = {
         "length": {
-            "mm": 0.001, "cm": 0.01, "m": 1.0, "km": 1000.0,
-            "in": 0.0254, "ft": 0.3048, "yd": 0.9144, "mi": 1609.344,
-            "尺": 0.3333, "寸": 0.03333, "里": 500.0,
+            "mm": 0.001,
+            "cm": 0.01,
+            "m": 1.0,
+            "km": 1000.0,
+            "in": 0.0254,
+            "ft": 0.3048,
+            "yd": 0.9144,
+            "mi": 1609.344,
+            "尺": 0.3333,
+            "寸": 0.03333,
+            "里": 500.0,
         },
         "weight": {
-            "mg": 0.000001, "g": 0.001, "kg": 1.0, "t": 1000.0,
-            "oz": 0.0283495, "lb": 0.453592, "斤": 0.5, "两": 0.05,
+            "mg": 0.000001,
+            "g": 0.001,
+            "kg": 1.0,
+            "t": 1000.0,
+            "oz": 0.0283495,
+            "lb": 0.453592,
+            "斤": 0.5,
+            "两": 0.05,
         },
         "time": {
-            "ms": 0.001, "s": 1.0, "min": 60.0, "h": 3600.0,
-            "day": 86400.0, "week": 604800.0,
+            "ms": 0.001,
+            "s": 1.0,
+            "min": 60.0,
+            "h": 3600.0,
+            "day": 86400.0,
+            "week": 604800.0,
         },
         "data": {
-            "b": 1.0, "byte": 1.0, "kb": 1024.0, "mb": 1024 ** 2,
-            "gb": 1024 ** 3, "tb": 1024 ** 4, "pb": 1024 ** 5,
-            "kib": 1024.0, "mib": 1024 ** 2, "gib": 1024 ** 3,
+            "b": 1.0,
+            "byte": 1.0,
+            "kb": 1024.0,
+            "mb": 1024**2,
+            "gb": 1024**3,
+            "tb": 1024**4,
+            "pb": 1024**5,
+            "kib": 1024.0,
+            "mib": 1024**2,
+            "gib": 1024**3,
         },
     }
 
@@ -1492,7 +1584,7 @@ def unit_convert(value: float, from_unit: str, to_unit: str, category: str = "le
     if category == "temperature":
         temp_units = {"c", "f", "k"}
         if from_unit not in temp_units or to_unit not in temp_units:
-            return f"错误：温度单位仅支持 c/f/k（摄氏/华氏/开尔文）"
+            return "错误：温度单位仅支持 c/f/k（摄氏/华氏/开尔文）"
         # 先转摄氏度
         if from_unit == "c":
             celsius = value
