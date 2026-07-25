@@ -677,10 +677,12 @@ class TestP1ScopeEnforcement:
         with patch("cayz_agent.middleware.get_settings") as mock:
             for k, v in self._SETTINGS.items():
                 setattr(mock.return_value, k, v)
-            resp = client.delete(
-                "/knowledge/test-source",
-                headers={"X-API-Key": "admin-key"},
-            )
+            # mock create_llm 避免 ChatOpenAI 因空 api_key 报错
+            with patch("cayz_agent.llm.create_llm"):
+                resp = client.delete(
+                    "/knowledge/test-source",
+                    headers={"X-API-Key": "admin-key"},
+                )
         assert resp.status_code != 403
 
     def test_readonly_can_chat(self, client):

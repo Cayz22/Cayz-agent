@@ -74,6 +74,9 @@ class TestSettingsDefaults:
         import os
 
         saved = os.environ.pop("AUTH_REQUIRED", None)
+        # 临时设置一个 dummy OPENAI_API_KEY，避免 validator 在 auth_required=True 时报错
+        saved_openai = os.environ.get("OPENAI_API_KEY")
+        os.environ["OPENAI_API_KEY"] = "dummy-key-for-test"
         try:
             reset_settings_cache()
             s = get_settings()
@@ -81,6 +84,10 @@ class TestSettingsDefaults:
         finally:
             if saved is not None:
                 os.environ["AUTH_REQUIRED"] = saved
+            if saved_openai is not None:
+                os.environ["OPENAI_API_KEY"] = saved_openai
+            else:
+                os.environ.pop("OPENAI_API_KEY", None)
             reset_settings_cache()
 
 
