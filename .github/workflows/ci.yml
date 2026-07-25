@@ -158,8 +158,11 @@ jobs:
 
       - name: Trivy 镜像漏洞扫描
         uses: aquasecurity/trivy-action@master
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         with:
-          image-ref: ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+          image-ref: ghcr.io/cayz22/cayz-agent:main
           severity: HIGH,CRITICAL
           exit-code: '1'
           ignore-unfixed: true
