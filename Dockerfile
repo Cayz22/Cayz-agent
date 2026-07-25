@@ -1,0 +1,67 @@
+# ===== 阶段 1: 构建阶段（安装依赖到独立目录）=====
+# P3 安全修复：固定基础镜像到具体 patch 版本（非浮动 tag），确保可复现构建
+# 生产环境建议进一步用 digest pin：
+#   FROM python:3.13.7-slim@sha256:<digest>
+# 可通过 docker pull python:3.13.7-slim 后 docker inspect --format='{{.RepoDigests}}' 获取 digest
+FROM python:3.13.7-slim AS builder
+
+WORKDIR /build
+
+# 系统依赖（仅构建时需要 gcc 编译 C 扩展）
+# P3：--no-install-recommends 避免安装推荐包；安装后清理 apt 缓存减小镜像体积
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# 复制依赖声明文件
+# P3：使用锁文件完全固定依赖版本，确保 Docker 构建可复现（供应链攻击防护）
+# 哈希校验升级：用 pip-compile --generate-hashes 重新生成 requirements.lock 后，
+#   在下方 pip install 命令中添加 --require-hashes 即可启用逐包哈希验证。
+COPY pyproject.toml requirements.lock ./
+
+# 安装依赖到 /build/venv（不污染系统 Python）
+# P3：--no-cache-dir 不缓存 pip 包减小镜像体积；锁文件确保版本完全固定
+RUN python -m venv /build/venv \
+    && /build/venv/bin/pip install --no-cache-dir --upgrade pip \
+    && /build/venv/bin/pip install --no-cache-dir -r requirements.lock
+
+# 复制项目代码并安装包
+COPY cayz_agent/ ./cayz_agent/
+COPY web_app.py ./
+RUN /build/venv/bin/pip install --no-cache-dir --no-deps -e .
+
+
+# ===== 阶段 2: 运行阶段（精简镜像，不含 gcc/构建工具）=====
+# P3：运行阶段同样固定到具体 patch 版本
+FROM python:3.13.7-slim AS runtime
+
+WORKDIR /app
+
+# 从构建阶段复制已安装好依赖的 venv
+COPY --from=builder /build/venv /app/venv
+# 从构建阶段复制应用代码
+COPY --from=builder /build/cayz_agent /app/cayz_agent
+COPY --from=builder /build/web_app.py /app/
+COPY pyproject.toml /app/
+
+# 将 venv 加入 PATH
+ENV PATH="/app/venv/bin:$PATH"
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# 数据持久化目录
+RUN mkdir -p /data
+
+# 创建非 root 用户并以该用户运行（避免容器逃逸时直接获得 root 权限）
+# P3：--create-home 创建家目录（部分库需要 HOME 环境变量）；--shell /bin/false 禁止登录
+RUN useradd --create-home --shell /bin/false --uid 1000 appuser \
+    && chown -R appuser:appuser /app /data
+USER appuser
+
+VOLUME ["/data"]
+
+# 暴露 API 端口
+EXPOSE 8000
+
+# 默认启动 API 服务（可通过 CMD 覆盖为 streamlit）
+CMD ["python", "-m", "cayz_agent.api"]

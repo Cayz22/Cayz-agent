@@ -1,0 +1,58 @@
+# 敏感配置（密钥等）
+.env
+.env.local
+.env.*.local
+.env.production
+
+# M3 TLS 证书（绝不提交版本控制）
+nginx/certs/*.pem
+nginx/certs/*.key
+nginx/certs/*.crt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+tests/.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+.trae/
+
+# 运行时产物（mermaid 渲染等）
+*.png
+cayz_task_progress*
+checkpoints.db
+*.db
+*.sqlite
+*.sqlite3
+
+# 数据库持久化（可能含业务数据，绝不提交）
+chroma_db/
+
+# 构建产物
+build/
+dist/
+*.egg
+
+# 日志
+*.log
+
+# 系统
+.DS_Store
+Thumbs.db

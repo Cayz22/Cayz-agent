@@ -1,0 +1,12 @@
+# TLS 证书目录
+# 将证书文件放置于此：
+#   - fullchain.pem（证书链）
+#   - privkey.pem（私钥）
+#
+# 生产环境推荐用 Let's Encrypt 自动签发：
+#   certbot certonly --standalone -d your-domain.com
+#   cp /etc/letsencrypt/live/your-domain.com/fullchain.pem ./
+#   cp /etc/letsencrypt/live/your-domain.com/privkey.pem ./
+#
+# 开发/测试环境可用 openssl 自签：
+#   openssl req -x509 -newkey rsa:4096 -nodes -keyout privkey.pem -out fullchain.pem -days 365 -subj "/CN=localhost"

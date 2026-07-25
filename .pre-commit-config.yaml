@@ -1,0 +1,10 @@
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.0
+    hooks:
+      - id: gitleaks
+        name: 检测敏感信息泄露
+        description: 扫描代码中的密钥、密码等敏感信息
+        entry: gitleaks protect --verbose --redact --staged
+        language: golang
+        pass_filenames: false

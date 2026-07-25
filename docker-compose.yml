@@ -1,0 +1,147 @@
+# 部署模式通过 profile 控制：
+#
+# 模式 A：direct（默认，开发/内网）
+#   docker-compose up -d
+#   api 直接暴露 8000、web 直接暴露 8501（HTTP，无 TLS）
+#
+# 模式 B：tls（生产，nginx TLS 终止）
+#   docker-compose --profile tls up -d
+#   api/web 不直接暴露端口，仅 nginx 对外提供 80/443
+#   P1 修复：避免 api/web 端口在 tls 模式下仍被无条件暴露，导致可绕过 nginx TLS 与安全头
+#
+# 切换：先 docker-compose down 再用新 profile 启动（不要同时启用两个 profile）
+
+# nginx TLS 反向代理（仅 tls profile 启用）
+nginx:
+  profiles: ["tls"]
+  image: nginx:1.27-alpine
+  ports:
+    - "80:80"    # HTTP → HTTPS 重定向
+    - "443:443"  # TLS 终止 + 反向代理
+  volumes:
+    - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    - ./nginx/certs:/etc/nginx/certs:ro
+  depends_on:
+    api:
+      condition: service_healthy
+  restart: unless-stopped
+  networks:
+    - default
+
+# API 服务
+# direct 模式：暴露 8000；tls 模式：仅容器间可见（expose 不发布到宿主机）
+api:
+  build: .
+  profiles: ["direct"]      # P1：仅 direct 模式发布端口
+  ports:
+    - "8000:8000"
+  env_file:
+    - .env
+  environment:
+    - CHECKPOINT_BACKEND=sqlite
+    - SQLITE_CHECKPOINT_PATH=/data/checkpoints/checkpoints.db
+    - CHROMA_PERSIST_DIR=/data/chroma_db
+    # P3：备份脚本配置（供 scripts/backup_sqlite.py 读取）
+    - SQLITE_BACKUP_DIR=/data/backups
+    - SQLITE_BACKUP_KEEP_DAYS=7
+  volumes:
+    # P3：分离 checkpoint 与 chroma 卷，便于独立备份/迁移
+    - checkpoint_data:/data/checkpoints
+    - chroma_data:/data/chroma_db
+    - backup_data:/data/backups
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen('http://localhost:8000/health', timeout=5).read(); sys.exit(0)"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 40s
+
+# tls 模式下的 api：不发布端口，仅 expose 给 nginx
+api_tls:
+  build: .
+  profiles: ["tls"]
+  expose:
+    - "8000"                 # P1：仅容器间可见，不发布到宿主机
+  env_file:
+    - .env
+  environment:
+    - CHECKPOINT_BACKEND=sqlite
+    - SQLITE_CHECKPOINT_PATH=/data/checkpoints/checkpoints.db
+    - CHROMA_PERSIST_DIR=/data/chroma_db
+    # P3：备份脚本配置
+    - SQLITE_BACKUP_DIR=/data/backups
+    - SQLITE_BACKUP_KEEP_DAYS=7
+    # tls 模式：强制 HTTPS + 信任转发头（从 nginx 读取真实 IP/协议）
+    - FORCE_HTTPS=true
+    - TRUST_FORWARDED_HEADERS=true
+  volumes:
+    # P3：分离卷，与 direct 模式一致
+    - checkpoint_data:/data/checkpoints
+    - chroma_data:/data/chroma_db
+    - backup_data:/data/backups
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen('http://localhost:8000/health', timeout=5).read(); sys.exit(0)"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 40s
+
+# Streamlit Web UI（direct 模式）
+web:
+  build: .
+  profiles: ["direct"]
+  command: ["streamlit", "run", "web_app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+  ports:
+    - "8501:8501"
+  env_file:
+    - .env
+  environment:
+    - CHROMA_PERSIST_DIR=/data/chroma_db
+  volumes:
+    # P3：web 仅需读取 chroma_db，不需 checkpoints/backups
+    - chroma_data:/data/chroma_db
+  restart: unless-stopped
+  depends_on:
+    api:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=5).read(); sys.exit(0)"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 40s
+
+# Streamlit Web UI（tls 模式，不发布端口）
+web_tls:
+  build: .
+  profiles: ["tls"]
+  command: ["streamlit", "run", "web_app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+  expose:
+    - "8501"
+  env_file:
+    - .env
+  environment:
+    - CHROMA_PERSIST_DIR=/data/chroma_db
+  volumes:
+    - chroma_data:/data/chroma_db
+  restart: unless-stopped
+  depends_on:
+    api_tls:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=5).read(); sys.exit(0)"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 40s
+
+# P3：分离的持久化卷
+# - checkpoint_data：LangGraph 会话检查点（SQLite），独立卷便于备份/迁移
+# - chroma_data：ChromaDB 向量库，独立卷避免与 checkpoint 备份混淆
+# - backup_data：SQLite 备份文件，可挂载到外部备份服务（如 restic/borg）
+volumes:
+  checkpoint_data:
+  chroma_data:
+  backup_data:

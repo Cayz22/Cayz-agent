@@ -1,0 +1,73 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "caya-agent"
+version = "1.0.0"
+description = "具备持久化记忆、联网搜索、知识库检索（RAG）与多模型支持的企业级 Agent"
+requires-python = ">=3.10"
+dependencies = [
+    # P3 安全修复：使用 ~= 约束（兼容版本），允许 patch 升级但锁定 minor 版本，
+    # 平衡安全更新与可复现构建。版本约束与 requirements.lock 中实际锁定的版本对齐。
+    # 生产环境应使用 requirements.lock 完全固定依赖（含哈希校验更佳）。
+    "langchain~=1.3.0",
+    "langchain-openai~=1.3.0",
+    "langchain-chroma~=1.1.0",
+    "langchain-text-splitters~=1.1.0",
+    "langgraph~=1.2.0",
+    "langgraph-checkpoint-sqlite~=3.1.0",
+    "chromadb~=1.5.0",
+    "python-dotenv~=1.2.0",
+    "streamlit~=1.58.0",
+    "tavily-python~=0.7.0",
+    "pydantic~=2.13.0",
+    "pydantic-settings~=2.14.0",
+    "fastapi~=0.139.0",
+    "uvicorn~=0.49.0",
+    "tenacity~=9.1.0",
+    "pypdf~=6.14.0",
+    "requests~=2.34.0",
+    "cachetools~=7.1.0",
+    # P3 工具扩展：文件解析 + 二维码生成
+    "openpyxl~=3.1.0",
+    "qrcode~=8.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest~=9.1.0",
+    "pytest-cov~=7.1.0",
+    "httpx~=0.28.0",
+    "ruff~=0.7.0",
+]
+ollama = [
+    "langchain-ollama~=0.2.0",
+]
+
+[project.scripts]
+caya-agent = "cayz_agent.__main__:main"
+caya-agent-api = "cayz_agent.api:run"
+
+[tool.setuptools.packages.find]
+include = ["cayz_agent*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+# 启用常用规则集
+select = ["E", "F", "W", "I", "UP", "B"]
+# 忽略部分与项目风格冲突的规则
+ignore = ["E501"]  # 行长度由 ruff format 管理
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["F401"]  # 测试文件允许未使用的 import（fixture 等）
+
+[tool.ruff.format]
+quote-style = "double"
