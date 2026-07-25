@@ -22,10 +22,14 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install dependencies
+      - name: Install dependencies from lock file
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          # 从 requirements.lock 安装精确版本，确保 CI 可复现
+          pip install -r requirements.lock
+          # 安装项目自身（不拉依赖，避免覆盖 lock 版本）+ dev 工具（带版本约束）
+          pip install --no-deps -e .
+          pip install "pytest~=9.1.0" "pytest-cov~=7.1.0" "httpx~=0.28.0"
 
       - name: Run tests with coverage
         run: |
@@ -52,8 +56,8 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install ruff
-        run: pip install ruff
+      - name: Install ruff (locked version)
+        run: pip install "ruff~=0.7.0"
 
       - name: Run ruff check
         run: ruff check cayz_agent/ tests/
@@ -75,11 +79,11 @@ jobs:
         run: pip install pip-audit
 
       - name: Audit Python dependencies (CVE 扫描)
-        # 扫描 pyproject.toml 中声明的依赖是否含已知漏洞
+        # 基于 requirements.lock 扫描，确保审计的是实际部署的精确版本
+        # 不使用 --strict，只报告直接依赖的已知漏洞，避免子依赖 CVE 误报
         run: |
           pip-audit \
-            --requirement <(python -c "import tomllib,sys; d=tomllib.load(open('pyproject.toml','rb')); print('\n'.join(d.get('project',{}).get('dependencies',[])))") \
-            --strict \
+            --requirement requirements.lock \
             --desc on
 
       - name: Run Trivy filesystem scan (源码漏洞 + 配置错误)

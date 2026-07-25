@@ -28,6 +28,7 @@ colorama==0.4.6
 ddgs==9.14.4
 distro==1.9.0
 durationpy==0.10
+et_xmlfile==2.0.0
 fake-useragent==2.2.0
 fastapi==0.139.0
 filelock==3.29.7
@@ -91,6 +92,7 @@ opentelemetry-exporter-otlp-proto-grpc==1.43.0
 opentelemetry-proto==1.43.0
 opentelemetry-sdk==1.43.0
 opentelemetry-semantic-conventions==0.64b0
+openpyxl==3.1.5
 orjson==3.11.9
 ormsgpack==1.12.2
 overrides==7.7.0
@@ -114,6 +116,7 @@ python-dateutil==2.9.0.post0
 python-dotenv==1.2.2
 python-multipart==0.0.32
 PyYAML==6.0.3
+qrcode==8.0
 referencing==0.37.0
 regex==2026.6.28
 requests==2.34.2
