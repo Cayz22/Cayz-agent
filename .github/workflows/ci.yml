@@ -33,15 +33,28 @@ jobs:
           pip install "pytest~=9.1.0" "pytest-cov~=7.1.0" "httpx~=0.28.0"
 
       - name: Run tests with coverage
+        # 保存测试输出到文件，便于失败时通过 artifact 下载分析
         run: |
           pytest tests/ -v \
             --cov=cayz_agent \
             --cov-report=term-missing \
             --cov-report=xml:coverage.xml \
-            --cov-fail-under=80
+            --cov-fail-under=80 \
+            --junitxml=test-results.xml \
+            2>&1 | tee test-output.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Upload test artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-output-${{ matrix.python-version }}
+          path: |
+            test-output.log
+            test-results.xml
 
       - name: Upload coverage report
-        if: matrix.python-version == '3.13'
+        if: matrix.python-version == '3.13' && success()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
