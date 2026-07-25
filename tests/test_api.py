@@ -677,8 +677,10 @@ class TestP1ScopeEnforcement:
         with patch("cayz_agent.middleware.get_settings") as mock:
             for k, v in self._SETTINGS.items():
                 setattr(mock.return_value, k, v)
-            # mock create_llm 避免 ChatOpenAI 因空 api_key 报错
-            with patch("cayz_agent.llm.create_llm"):
+            # mock get_rag_manager 避免 OpenAIEmbeddings 因空 api_key 报错
+            mock_rag = MagicMock()
+            mock_rag.delete_by_source.return_value = 0
+            with patch("cayz_agent.rag.get_rag_manager", return_value=mock_rag):
                 resp = client.delete(
                     "/knowledge/test-source",
                     headers={"X-API-Key": "admin-key"},
