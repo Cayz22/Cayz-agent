@@ -159,19 +159,18 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Install Trivy (pinned version)
-        # P1 供应链加固：从 GitHub Release 下载固定版本二进制并校验 SHA256
-        # 旧实现 curl|sh 从 main 分支动态拉取安装脚本，脚本内容随时可能变化
+        # 仅固定版本（比旧版 curl|sh 强：不拉 main 动态脚本）。
+        # 注意：此版未校验 hash，对「release 被投毒」无防护；要真加固请用方案 A。
+        env:
+          TRIVY_VERSION: "0.55.0"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          TRIVY_VERSION=0.55.0
-          BASE="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}"
-          curl --retry 3 -sfL -o /tmp/trivy.tar.gz \
-            "${BASE}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
-          curl --retry 3 -sfL -o /tmp/trivy_checksums.txt \
-            "${BASE}/trivy_${TRIVY_VERSION}_checksums.txt"
-          want=$(grep -F "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" /tmp/trivy_checksums.txt | awk '{print $1}')
-          got=$(sha256sum /tmp/trivy.tar.gz | awk '{print $1}')
-          [ -n "${want}" ] && [ "${want}" = "${got}" ]
+          URL="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl --retry 3 --retry-delay 5 -fL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/octet-stream" \
+            -o /tmp/trivy.tar.gz "$URL"
           tar -xzf /tmp/trivy.tar.gz -C /usr/local/bin trivy
           trivy --version
 
