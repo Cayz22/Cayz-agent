@@ -163,7 +163,7 @@ jobs:
         # 本步 EXPECTED_SHA256 留空 = 先确保 CI 绿，并打印实际 sha256；
         # 绿后把打印值填进 EXPECTED_SHA256，即升级为「带外 pin hash」真加固（见末尾说明）。
         env:
-          TRIVY_VERSION: "0.60.0"          # ← 由 0.55.0 改：该版本有多处真实下载链接佐证；务必避开投毒版 0.69.4
+          TRIVY_VERSION: "0.69.3"          # 0.60.0 已被供应链善后清理→404；0.69.4 是投毒版禁用
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EXPECTED_SHA256: ""              # 留空=只打印不校验；填 64 位 hex=启用带外校验
         run: |
