@@ -158,19 +158,50 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Install Trivy (pinned version)
-        # 仅固定版本（比旧版 curl|sh 强：不拉 main 动态脚本）。
-        # 注意：此版未校验 hash，对「release 被投毒」无防护；要真加固请用方案 A。
+            - name: Install Trivy (pinned version)
+        # P1 供应链加固：固定版本 + 经 GitHub API 取真实资产 URL（不手拼命名，杜绝 404）。
+        # 本步 EXPECTED_SHA256 留空 = 先确保 CI 绿，并打印实际 sha256；
+        # 绿后把打印值填进 EXPECTED_SHA256，即升级为「带外 pin hash」真加固（见末尾说明）。
         env:
-          TRIVY_VERSION: "0.55.0"
+          TRIVY_VERSION: "0.60.0"          # ← 由 0.55.0 改：该版本有多处真实下载链接佐证；务必避开投毒版 0.69.4
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXPECTED_SHA256: ""              # 留空=只打印不校验；填 64 位 hex=启用带外校验
         run: |
           set -euo pipefail
-          URL="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
-          curl --retry 3 --retry-delay 5 -fL \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/octet-stream" \
-            -o /tmp/trivy.tar.gz "$URL"
+          API="https://api.github.com/repos/aquasecurity/trivy/releases/tags/v${TRIVY_VERSION}"
+          HDR=(-H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json")
+
+          # 1) 取该 tag 的 release 元数据:tag 不存在则 API 404,这里明确报错,不再 exit 22 干瞪眼
+          if ! REL=$(curl --retry 3 --retry-delay 5 -fsSL "${HDR[@]}" "$API" 2>/tmp/api_err); then
+            echo "::error::获取 release v${TRIVY_VERSION} 失败（该版本可能不存在/已被清理)。curl 详情："
+            cat /tmp/api_err || true
+            echo "请把 TRIVY_VERSION 改成真实存在的版本，例如 0.60.0 / 0.69.3(避开 0.69.4)。"
+            exit 1
+          fi
+
+          # 2) 运行时挑 Linux/amd64 压缩包，兼容 64bit / AMD64 / amd64 历史命名
+          TAR_NAME=$(echo "$REL" | jq -r --arg v "$TRIVY_VERSION" \
+            '[.assets[].name | select(test("^trivy_\($v)_Linux-(64bit|AMD64|amd64)\\.tar\\.gz$"))] | .[0] // empty')
+          if [ -z "${TAR_NAME}" ]; then
+            echo "::error::v${TRIVY_VERSION} 的 release 里没有 Linux/amd64 的 tar.gz。该版本实际资产如下,请据此换版本："
+            echo "$REL" | jq -r '.assets[].name'
+            exit 1
+          fi
+          TAR_URL=$(echo "$REL" | jq -r --arg n "$TAR_NAME" '.assets[] | select(.name==$n) | .browser_download_url')
+          echo "将下载: ${TAR_NAME}  (${TAR_URL})"
+
+          # 3) 用 API 给的真实 URL 下载（不再猜命名）
+          curl --retry 3 --retry-delay 5 -fL "${HDR[@]}" \
+            -H "Accept: application/octet-stream" -o /tmp/trivy.tar.gz "$TAR_URL"
+
+          # 4) 校验(可选):EXPECTED_SHA256 非空才比对；为空只打印，便于首次取 hash
+          got=$(sha256sum /tmp/trivy.tar.gz | awk '{print $1}')
+          echo "actual sha256: ${got}"
+          if [ -n "${EXPECTED_SHA256}" ] && [ "${got}" != "${EXPECTED_SHA256}" ]; then
+            echo "::error::SHA256 不匹配 期望=${EXPECTED_SHA256} 实际=${got}"
+            exit 1
+          fi
+
           tar -xzf /tmp/trivy.tar.gz -C /usr/local/bin trivy
           trivy --version
 
