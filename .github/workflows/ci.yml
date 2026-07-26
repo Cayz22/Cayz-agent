@@ -111,7 +111,7 @@ jobs:
       - name: Run Trivy filesystem scan (源码漏洞 + 配置错误)
         # P1 供应链加固：固定 trivy-action 到具体版本 tag，避免 @master 可变引用
         # 旧实现 @master 上游任何提交（含被入侵后的恶意提交）会立即在下次 CI 生效
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@v0.24.0
         with:
           scan-type: fs
           scan-ref: .
