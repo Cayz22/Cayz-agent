@@ -65,11 +65,20 @@ def register_cleanup(hook: Callable[[], None]) -> None:
 def run_cleanups(timeout: float = 30.0) -> int:
     """执行所有注册的清理钩子（LIFO 顺序）。
 
+    P1 修复：旧实现的超时检查仅在 hook 执行前，单个 hook 阻塞
+    （如 thread.join() 无超时、socket.recv() 阻塞、文件 I/O hang）会
+    一直卡住，超时机制形同虚设，优雅停机可能无限等待。
+
+    本实现用线程执行每个 hook，主线程 join(remaining) 等待：
+    - hook 在 remaining 秒内完成 → 正常计数
+    - hook 超时未完成 → 记录警告并跳过（daemon 线程继续在后台运行，
+      进程退出时会被 OS 强制回收，不会真正泄漏）
+
     Args:
         timeout: 总超时时间（秒），超时后未执行的钩子跳过
 
     Returns:
-        成功执行的钩子数
+        成功执行的钩子数（含超时但已启动的）
     """
     with _lock:
         hooks = list(reversed(_cleanup_hooks))  # LIFO：后注册的先执行
@@ -82,12 +91,36 @@ def run_cleanups(timeout: float = 30.0) -> int:
         if remaining <= 0:
             logger.warning("清理超时，剩余 %d 个钩子未执行", len(hooks) - executed)
             break
-        try:
-            hook()
+
+        hook_name = getattr(hook, "__name__", repr(hook))
+        result_holder: dict = {"done": False, "exc": None}
+
+        def _runner():
+            try:
+                hook()
+                result_holder["done"] = True
+            except Exception as e:  # noqa: BLE001
+                result_holder["exc"] = e
+
+        # daemon=True：进程退出时线程会被强制回收，避免 hook 阻塞导致进程无法退出
+        t = threading.Thread(target=_runner, name=f"cleanup-{hook_name}", daemon=True)
+        t.start()
+        t.join(remaining)  # 最多等待 remaining 秒
+
+        if t.is_alive():
+            # hook 超时未完成，跳过（线程继续在后台运行，进程退出时由 OS 回收）
+            logger.warning(
+                "清理钩子 %s 执行超时（>%ss），跳过等待（后台线程将继续运行）",
+                hook_name,
+                remaining,
+            )
+            executed += 1  # 已启动，计入「已处理」
+        elif result_holder["exc"] is not None:
+            logger.exception("清理钩子执行失败: %s", hook_name, exc_info=result_holder["exc"])
+        else:
             executed += 1
-        except Exception:
-            logger.exception("清理钩子执行失败: %s", getattr(hook, "__name__", hook))
-    logger.info("资源清理完成（%d/%d 个钩子成功执行）", executed, len(hooks))
+
+    logger.info("资源清理完成（%d/%d 个钩子已处理）", executed, len(hooks))
     return executed
 
 

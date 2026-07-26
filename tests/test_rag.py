@@ -160,11 +160,18 @@ class TestRAGManager:
         mock_vectorstore._collection.count.return_value = 42
         assert manager.count() == 42
 
-    def test_count_exception_returns_zero(self, mock_settings, mock_embeddings, mock_vectorstore):
-        """count 异常时应返回 0"""
+    def test_count_exception_propagates(self, mock_settings, mock_embeddings, mock_vectorstore):
+        """P2 修复：count 异常应向上传播，便于 /health/deep 探测故障"""
         manager = self._create_manager(mock_settings, mock_embeddings, mock_vectorstore)
         mock_vectorstore._collection.count.side_effect = Exception("DB error")
-        assert manager.count() == 0
+        with pytest.raises(Exception, match="DB error"):
+            manager.count()
+
+    def test_count_safe_returns_zero_on_exception(self, mock_settings, mock_embeddings, mock_vectorstore):
+        """P2 修复：count_safe 异常时容错返回 0，仅供非关键路径"""
+        manager = self._create_manager(mock_settings, mock_embeddings, mock_vectorstore)
+        mock_vectorstore._collection.count.side_effect = Exception("DB error")
+        assert manager.count_safe() == 0
 
 
 class TestRAGDeleteBySource:

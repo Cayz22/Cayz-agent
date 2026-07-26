@@ -857,6 +857,32 @@ class TestP2ErrorResponseConvergence:
         detail = resp.json()["detail"]
         assert "connection refused" in detail  # 开发模式保留详情
 
+    def test_p2_agent_exception_logs_stacktrace(self, client, caplog):
+        """P2-5 修复：agent 异常时应通过 logger.exception 记录堆栈，便于运维定位根因。
+
+        旧实现仅将异常转为 HTTPException，未调用 logger.exception，导致生产环境
+        agent 故障无堆栈日志，运维无法排查。
+        """
+        import logging
+
+        with patch("cayz_agent.api.settings") as mock_s:
+            mock_s.auth_required = True
+            with patch(
+                "cayz_agent.api.get_agent_app_for_scope",
+                side_effect=RuntimeError("test agent failure"),
+            ):
+                with caplog.at_level(logging.ERROR):
+                    resp = client.post("/chat", json={"message": "hello"})
+
+        assert resp.status_code == 500
+        # 应有 ERROR 级别日志记录异常堆栈
+        assert any(
+            "Agent 执行失败" in record.message
+            and record.levelno == logging.ERROR
+            and record.exc_info is not None  # logger.exception 应附带堆栈
+            for record in caplog.records
+        ), f"未找到带堆栈的 ERROR 日志，实际记录: {[(r.message, r.levelno, r.exc_info) for r in caplog.records]}"
+
 
 class TestM1ThreadIdValidation:
     """M1 会话 ID 安全：secrets 生成 + 用户传入 thread_id 格式校验"""
@@ -955,3 +981,142 @@ class TestM1ThreadIdValidation:
         assert resp.status_code == 200
         # 响应文本中应包含自动生成的 thread_id（以 'api-' 开头）
         assert "api-" in resp.text
+
+
+class TestP1SessionBackendErrorHandling:
+    """P1 IDOR fail-open 修复：SessionBackendError 时 API 应返回 503（fail-closed）
+
+    覆盖所有调用 SessionManager 的端点：
+    - /chat、/chat/stream：IDOR 校验时后端异常 → 503
+    - /sessions、/sessions/{thread_id} GET/DELETE：查询/删除时后端异常 → 503
+
+    旧实现：session.py 静默返回 None/False/([], 0) → api.py 视为「不存在」→ 放行或返回空
+    新实现：session.py 抛 SessionBackendError → api.py 捕获返回 503 → 客户端可重试
+    """
+
+    _SETTINGS = {
+        "api_key": "admin-key",
+        "write_api_keys": "write-key",
+        "readonly_api_keys": "ro-key",
+        "auth_required": True,
+        "rate_limit_per_minute": 0,
+        "rate_limit_write_per_minute": 0,
+        "trust_forwarded_headers": False,
+    }
+
+    def test_chat_returns_503_on_touch_and_get_owner_error(self, client):
+        """/chat：touch_and_get_owner 抛 SessionBackendError 时应返回 503"""
+        from cayz_agent.exceptions import SessionBackendError
+
+        with patch("cayz_agent.middleware.get_settings") as mock:
+            for k, v in self._SETTINGS.items():
+                setattr(mock.return_value, k, v)
+            with patch("cayz_agent.api.get_session_manager") as mock_mgr:
+                mock_mgr.return_value.touch_and_get_owner.side_effect = SessionBackendError("database is locked")
+                resp = client.post(
+                    "/chat",
+                    json={"message": "你好"},
+                    headers={"X-API-Key": "ro-key"},
+                )
+        assert resp.status_code == 503
+        assert "会话服务暂时不可用" in resp.json()["detail"]
+
+    def test_chat_returns_503_on_session_exists_error(self, client):
+        """/chat：session_exists 抛 SessionBackendError 时应返回 503
+
+        场景：touch_and_get_owner 返回 None（memory 后端 by design），
+        但 session_exists 因 SQLite 异常抛 SessionBackendError → 应返回 503 而非放行。
+        """
+        from cayz_agent.exceptions import SessionBackendError
+
+        with patch("cayz_agent.middleware.get_settings") as mock:
+            for k, v in self._SETTINGS.items():
+                setattr(mock.return_value, k, v)
+            with patch("cayz_agent.api.get_session_manager") as mock_mgr:
+                mock_mgr.return_value.touch_and_get_owner.return_value = None
+                mock_mgr.return_value.session_exists.side_effect = SessionBackendError("disk I/O error")
+                resp = client.post(
+                    "/chat",
+                    json={"message": "你好"},
+                    headers={"X-API-Key": "ro-key"},
+                )
+        assert resp.status_code == 503
+        assert "会话服务暂时不可用" in resp.json()["detail"]
+
+    def test_chat_stream_returns_503_on_touch_and_get_owner_error(self, client):
+        """/chat/stream：touch_and_get_owner 抛 SessionBackendError 时应返回 503
+
+        P1 修复：原 /chat/stream 未捕获 SessionBackendError，导致返回 500（unhandled）。
+        现与 /chat 对齐，返回 503 fail-closed。
+        """
+        from cayz_agent.exceptions import SessionBackendError
+
+        with patch("cayz_agent.middleware.get_settings") as mock:
+            for k, v in self._SETTINGS.items():
+                setattr(mock.return_value, k, v)
+            with patch("cayz_agent.api.get_session_manager") as mock_mgr:
+                mock_mgr.return_value.touch_and_get_owner.side_effect = SessionBackendError("database is locked")
+                resp = client.post(
+                    "/chat/stream",
+                    json={"message": "你好"},
+                    headers={"X-API-Key": "ro-key"},
+                )
+        assert resp.status_code == 503
+        assert "会话服务暂时不可用" in resp.json()["detail"]
+
+    def test_chat_stream_returns_503_on_session_exists_error(self, client):
+        """/chat/stream：session_exists 抛 SessionBackendError 时应返回 503"""
+        from cayz_agent.exceptions import SessionBackendError
+
+        with patch("cayz_agent.middleware.get_settings") as mock:
+            for k, v in self._SETTINGS.items():
+                setattr(mock.return_value, k, v)
+            with patch("cayz_agent.api.get_session_manager") as mock_mgr:
+                mock_mgr.return_value.touch_and_get_owner.return_value = None
+                mock_mgr.return_value.session_exists.side_effect = SessionBackendError("disk I/O error")
+                resp = client.post(
+                    "/chat/stream",
+                    json={"message": "你好"},
+                    headers={"X-API-Key": "ro-key"},
+                )
+        assert resp.status_code == 503
+        assert "会话服务暂时不可用" in resp.json()["detail"]
+
+    def test_list_sessions_returns_503_on_backend_error(self, client):
+        """/sessions：list_sessions 抛 SessionBackendError 时应返回 503"""
+        from cayz_agent.exceptions import SessionBackendError
+
+        with patch("cayz_agent.middleware.get_settings") as mock:
+            for k, v in self._SETTINGS.items():
+                setattr(mock.return_value, k, v)
+            with patch("cayz_agent.api.get_session_manager") as mock_mgr:
+                mock_mgr.return_value.list_sessions.side_effect = SessionBackendError("database is locked")
+                resp = client.get("/sessions", headers={"X-API-Key": "admin-key"})
+        assert resp.status_code == 503
+        assert "会话服务暂时不可用" in resp.json()["detail"]
+
+    def test_get_session_detail_returns_503_on_backend_error(self, client):
+        """/sessions/{thread_id} GET：get_session 抛 SessionBackendError 时应返回 503"""
+        from cayz_agent.exceptions import SessionBackendError
+
+        with patch("cayz_agent.middleware.get_settings") as mock:
+            for k, v in self._SETTINGS.items():
+                setattr(mock.return_value, k, v)
+            with patch("cayz_agent.api.get_session_manager") as mock_mgr:
+                mock_mgr.return_value.get_session.side_effect = SessionBackendError("corrupt database")
+                resp = client.get("/sessions/some-thread", headers={"X-API-Key": "admin-key"})
+        assert resp.status_code == 503
+        assert "会话服务暂时不可用" in resp.json()["detail"]
+
+    def test_delete_session_returns_503_on_backend_error(self, client):
+        """/sessions/{thread_id} DELETE：delete_session 抛 SessionBackendError 时应返回 503"""
+        from cayz_agent.exceptions import SessionBackendError
+
+        with patch("cayz_agent.middleware.get_settings") as mock:
+            for k, v in self._SETTINGS.items():
+                setattr(mock.return_value, k, v)
+            with patch("cayz_agent.api.get_session_manager") as mock_mgr:
+                mock_mgr.return_value.delete_session.side_effect = SessionBackendError("database is locked")
+                resp = client.delete("/sessions/some-thread", headers={"X-API-Key": "write-key"})
+        assert resp.status_code == 503
+        assert "会话服务暂时不可用" in resp.json()["detail"]

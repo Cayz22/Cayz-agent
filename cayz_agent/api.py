@@ -49,6 +49,7 @@ from .monitor import (
     record_session_start,
 )
 from .sanitizers import detect_sensitive_info, sanitize_exception, sanitize_text
+from .exceptions import SessionBackendError
 from .session import get_session_manager
 from .validators import (
     MAX_BATCH_ITEMS,
@@ -320,10 +321,17 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
             status_code=500,
             content={"detail": "服务器内部错误，请稍后重试或联系管理员"},
         )
-    # 开发环境返回脱敏后的详情便于调试
+    # 开发环境返回脱敏后的详情 + request_id 便于运维查日志
+    # P1 修复：开发模式若误部署到生产，sanitize_exception 仍可能泄露框架版本、
+    # 库内部异常类型、SQL 错误等。增加 request_id 让运维可通过日志定位，
+    # 同时保留详情便于本地调试
+    import uuid as _uuid
+
+    request_id = str(_uuid.uuid4())
+    logger.error("request_id=%s path=%s error=%s", request_id, request.url.path, sanitize_exception(exc))
     return JSONResponse(
         status_code=500,
-        content={"detail": f"内部错误: {sanitize_exception(exc)}"},
+        content={"detail": f"内部错误 (request_id={request_id}): {sanitize_exception(exc)}"},
     )
 
 
@@ -616,19 +624,43 @@ async def chat(req: ChatRequest, request: Request):
     except InputValidationError as e:
         raise HTTPException(status_code=422, detail=f"输入无效: {e}")
 
-    # P0 IDOR 修复：非管理员若传入已存在的 thread_id，必须校验归属，防止越权读取/接管他人会话
+    # P1 IDOR TOCTOU 修复：用 touch_and_get_owner 原子占位 + 返回真实 owner，
+    # 替代旧实现的 session_exists + owns_session + touch_session 两步流程
+    # 旧实现两步之间无事务保护，并发请求可绕过 IDOR 校验越权访问他人会话
     manager = get_session_manager()
     client_id = _get_request_client_id(request)
     scope = _get_request_scope(request)
-    if req.thread_id and scope != "admin":
-        if manager.session_exists(tid) and not manager.owns_session(tid, client_id):
-            # 不区分「不存在」与「不归属」，避免泄露存在性
+    if scope != "admin":
+        try:
+            real_owner = manager.touch_and_get_owner(tid, owner=client_id)
+        except SessionBackendError as e:
+            # P1 IDOR fail-open 修复：SQLite 异常（磁盘满/锁超时/文件损坏）时
+            # 必须 fail-closed 返回 503，不可放行请求。
+            # 旧实现 touch_and_get_owner 异常返回 None、session_exists 异常返回 False，
+            # 两者叠加导致 IDOR 校验被跳过、请求放行，可被利用枚举 thread_id 越权。
+            logger.error("IDOR 校验后端不可用，拒绝请求 (thread_id=%s): %s", tid, e)
+            record_request(request_type="chat", success=False, latency=time.perf_counter() - start)
+            raise HTTPException(status_code=503, detail="会话服务暂时不可用，请稍后重试")
+        # touch_and_get_owner 返回 None 表示后端不支持 owner 跟踪（如 memory 后端，by design）
+        # 此时对已存在的会话仍应 fail-closed（拒绝），防止默认配置下越权
+        if real_owner is None:
+            try:
+                exists = manager.session_exists(tid)
+            except SessionBackendError as e:
+                logger.error("session_exists 后端不可用，拒绝请求 (thread_id=%s): %s", tid, e)
+                record_request(request_type="chat", success=False, latency=time.perf_counter() - start)
+                raise HTTPException(status_code=503, detail="会话服务暂时不可用，请稍后重试")
+            if exists:
+                # 不区分「不存在」与「不归属」，避免泄露存在性
+                raise HTTPException(status_code=403, detail="无权访问该会话")
+        elif real_owner != client_id:
+            # 已存在会话且 owner 不是当前请求者 → 越权
             raise HTTPException(status_code=403, detail="无权访问该会话")
+    else:
+        # admin 仍走 touch_session（无 IDOR 校验需求）
+        manager.touch_session(tid, owner=client_id)
 
     config = {"configurable": {"thread_id": tid}}
-
-    # 记录会话活跃时间（用于过期清理）+ P1 IDOR：记录会话归属
-    manager.touch_session(tid, owner=client_id)
 
     record_session_start()
     try:
@@ -644,6 +676,9 @@ async def chat(req: ChatRequest, request: Request):
 
     except Exception as e:
         record_request(request_type="chat", success=False, latency=time.perf_counter() - start)
+        # P2 修复：补 logger.exception 记录堆栈，便于运维定位 agent 故障根因
+        # （HTTPException 不会触发全局 handler 的日志记录，需在此显式记录）
+        logger.exception("Agent 执行失败 (thread_id=%s): %s", tid, e)
         # P2 错误响应体收敛：生产模式返回通用消息，开发模式返回脱敏详情
         if settings.auth_required:
             raise HTTPException(status_code=500, detail="Agent 执行出错，请稍后重试")
@@ -672,17 +707,33 @@ async def chat_stream(req: ChatRequest, request: Request):
     except InputValidationError as e:
         raise HTTPException(status_code=422, detail=f"输入无效: {e}")
 
-    # P0 IDOR 修复：非管理员若传入已存在的 thread_id，必须校验归属
+    # P1 IDOR TOCTOU 修复：与 /chat 对齐，用 touch_and_get_owner 原子占位
+    # P1 IDOR fail-open 修复：与 /chat 对齐，SessionBackendError 时返回 503（fail-closed）
     manager = get_session_manager()
     client_id = _get_request_client_id(request)
     scope = _get_request_scope(request)
-    if req.thread_id and scope != "admin":
-        if manager.session_exists(tid) and not manager.owns_session(tid, client_id):
+    if scope != "admin":
+        try:
+            real_owner = manager.touch_and_get_owner(tid, owner=client_id)
+        except SessionBackendError as e:
+            logger.error("IDOR 校验后端不可用，拒绝请求 (thread_id=%s): %s", tid, e)
+            record_request(request_type="stream", success=False, latency=time.perf_counter() - start)
+            raise HTTPException(status_code=503, detail="会话服务暂时不可用，请稍后重试")
+        # touch_and_get_owner 返回 None 表示后端不支持 owner 跟踪（如 memory 后端，by design）
+        # 此时对已存在的会话仍应 fail-closed（拒绝），防止默认配置下越权
+        if real_owner is None:
+            try:
+                exists = manager.session_exists(tid)
+            except SessionBackendError as e:
+                logger.error("session_exists 后端不可用，拒绝请求 (thread_id=%s): %s", tid, e)
+                record_request(request_type="stream", success=False, latency=time.perf_counter() - start)
+                raise HTTPException(status_code=503, detail="会话服务暂时不可用，请稍后重试")
+            if exists:
+                raise HTTPException(status_code=403, detail="无权访问该会话")
+        elif real_owner != client_id:
             raise HTTPException(status_code=403, detail="无权访问该会话")
-
-    # 记录会话活跃时间（与 /chat 保持一致，防止被 cleanup_expired_sessions 误删）
-    # P1 IDOR：记录会话归属
-    manager.touch_session(tid, owner=client_id)
+    else:
+        manager.touch_session(tid, owner=client_id)
 
     config = {"configurable": {"thread_id": tid}}
 
@@ -708,6 +759,8 @@ async def chat_stream(req: ChatRequest, request: Request):
             yield f"data: {json.dumps({'done': True, 'reply': safe, 'thread_id': tid}, ensure_ascii=False)}\n\n"
         except Exception as e:
             record_request(request_type="stream", success=False, latency=time.perf_counter() - start)
+            # P2 修复：补 logger.exception 记录堆栈，便于运维定位流式 agent 故障根因
+            logger.exception("Agent 流式执行失败 (thread_id=%s): %s", tid, e)
             # P1 信息泄露修复：与 /chat 端点对齐，生产模式返回通用消息
             # 旧实现无论 auth_required 都返回 sanitize_exception(e)，会泄露框架版本、
             # 库内部异常类型、SQL 错误、API Key 失效状态等，便于攻击者指纹后端
@@ -743,7 +796,12 @@ async def list_sessions(
     manager = get_session_manager()
     # admin 无 owner 过滤；非 admin 按 client_id 过滤
     owner_filter = None if _get_request_scope(request) == "admin" else _get_request_client_id(request)
-    sessions, total = manager.list_sessions(limit=limit, offset=offset, owner_filter=owner_filter)
+    try:
+        sessions, total = manager.list_sessions(limit=limit, offset=offset, owner_filter=owner_filter)
+    except SessionBackendError as e:
+        logger.error("列出会话后端不可用: %s", e)
+        record_request(request_type="sessions_list", success=False, latency=time.perf_counter() - start)
+        raise HTTPException(status_code=503, detail="会话服务暂时不可用，请稍后重试")
     record_request(request_type="sessions_list", success=True, latency=time.perf_counter() - start)
     return {
         "sessions": [s.to_dict() for s in sessions],
@@ -757,7 +815,12 @@ async def get_session_detail(thread_id: str, request: Request = None):
     start = time.perf_counter()
     manager = get_session_manager()
     owner_filter = None if _get_request_scope(request) == "admin" else _get_request_client_id(request)
-    info = manager.get_session(thread_id, owner_filter=owner_filter)
+    try:
+        info = manager.get_session(thread_id, owner_filter=owner_filter)
+    except SessionBackendError as e:
+        logger.error("查询会话详情后端不可用: %s", e)
+        record_request(request_type="sessions_get", success=False, latency=time.perf_counter() - start)
+        raise HTTPException(status_code=503, detail="会话服务暂时不可用，请稍后重试")
     record_request(request_type="sessions_get", success=True, latency=time.perf_counter() - start)
     if info is None:
         return {"exists": False, "thread_id": thread_id}
@@ -775,7 +838,12 @@ async def delete_session(thread_id: str, request: Request = None, _: None = Depe
     start = time.perf_counter()
     manager = get_session_manager()
     owner_filter = None if _get_request_scope(request) == "admin" else _get_request_client_id(request)
-    deleted = manager.delete_session(thread_id, owner_filter=owner_filter)
+    try:
+        deleted = manager.delete_session(thread_id, owner_filter=owner_filter)
+    except SessionBackendError as e:
+        logger.error("删除会话后端不可用: %s", e)
+        record_request(request_type="sessions_delete", success=False, latency=time.perf_counter() - start)
+        raise HTTPException(status_code=503, detail="会话服务暂时不可用，请稍后重试")
     if deleted:
         record_session_deleted()
     record_request(request_type="sessions_delete", success=deleted, latency=time.perf_counter() - start)
@@ -815,14 +883,22 @@ async def list_knowledge_sources():
 
 @app.get("/knowledge/count")
 async def knowledge_count():
-    """获取知识库文档片段总数"""
+    """获取知识库文档片段总数。
+
+    P2 修复：ChromaDB 故障时让异常传播返回 500，调用方可感知故障；
+    不再静默返回 0 误导调用方。
+    """
     start = time.perf_counter()
     from .rag import get_rag_manager
 
     manager = get_rag_manager()
-    count = manager.count()
-    record_request(request_type="knowledge_count", success=True, latency=time.perf_counter() - start)
-    return {"count": count}
+    try:
+        count = manager.count()
+        record_request(request_type="knowledge_count", success=True, latency=time.perf_counter() - start)
+        return {"count": count}
+    except Exception:
+        record_request(request_type="knowledge_count", success=False, latency=time.perf_counter() - start)
+        raise
 
 
 @app.post("/knowledge/upload")

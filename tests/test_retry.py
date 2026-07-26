@@ -94,7 +94,7 @@ class TestRetryOnError:
         assert LLMRateLimitError in RETRYABLE_EXCEPTIONS
 
     def test_retries_on_notify_error(self):
-        """NotifyError 应触发重试（修复 P0：原 RETRYABLE_EXCEPTIONS 未包含 NotifyError）"""
+        """NotifyError(retryable=True) 应触发重试（修复 P0：原 RETRYABLE_EXCEPTIONS 未包含 NotifyError）"""
         call_count = 0
 
         @retry_on_error(max_attempts=3, min_wait=0.01, max_wait=0.05)
@@ -102,7 +102,7 @@ class TestRetryOnError:
             nonlocal call_count
             call_count += 1
             if call_count < 2:
-                raise NotifyError("企业微信 Webhook 暂时不可用")
+                raise NotifyError("企业微信 Webhook 暂时不可用", retryable=True)
             return "notified"
 
         result = func()
@@ -110,7 +110,7 @@ class TestRetryOnError:
         assert call_count == 2
 
     def test_retries_on_email_error(self):
-        """EmailError 应触发重试（修复 P0：原 RETRYABLE_EXCEPTIONS 未包含 EmailError）"""
+        """EmailError(retryable=True) 应触发重试（修复 P0：原 RETRYABLE_EXCEPTIONS 未包含 EmailError）"""
         call_count = 0
 
         @retry_on_error(max_attempts=3, min_wait=0.01, max_wait=0.05)
@@ -118,12 +118,49 @@ class TestRetryOnError:
             nonlocal call_count
             call_count += 1
             if call_count < 2:
-                raise EmailError("SMTP 瞬时拥堵")
+                raise EmailError("SMTP 瞬时拥堵", retryable=True)
             return "sent"
 
         result = func()
         assert result == "sent"
         assert call_count == 2
+
+    def test_p2_non_retryable_cayz_error_not_retried(self):
+        """P2-1 修复：CayzAgentError(retryable=False) 永久性错误不应重试。
+
+        旧实现用 retry_if_exception_type(RETRYABLE_EXCEPTIONS) 只看类型不看属性，
+        导致 EmailError/NotifyError 即使显式标记 retryable=False 也会被重试，
+        浪费时间且可能导致 SMTP 账号被锁定。
+        新实现用 retry_if_exception(_is_retryable) 优先检查 retryable 属性。
+        """
+        call_count = 0
+
+        @retry_on_error(max_attempts=3, min_wait=0.01, max_wait=0.02)
+        def func():
+            nonlocal call_count
+            call_count += 1
+            # 模拟 SMTP 认证失败（永久性错误）
+            raise EmailError("SMTP 认证失败（账号密码错误）", retryable=False)
+
+        with pytest.raises(EmailError):
+            func()
+        assert call_count == 1  # 不重试，只调用一次
+
+    def test_p2_retryable_cayz_error_retries(self):
+        """P2-1 修复：CayzAgentError(retryable=True) 瞬时错误应重试。"""
+        call_count = 0
+
+        @retry_on_error(max_attempts=3, min_wait=0.01, max_wait=0.05)
+        def func():
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise EmailError("SMTP 421 服务不可用", retryable=True)
+            return "sent"
+
+        result = func()
+        assert result == "sent"
+        assert call_count == 3
 
     def test_non_retryable_crm_error_not_retried(self):
         """CRMError 是业务集成永久错误，不应重试（区别于 NotifyError/EmailError）"""
@@ -140,14 +177,14 @@ class TestRetryOnError:
         assert call_count == 1
 
     def test_reraises_notify_error_after_max_attempts(self):
-        """NotifyError 重试用尽后应 reraise（保证错误能传播到上层 tools.py）"""
+        """NotifyError(retryable=True) 重试用尽后应 reraise（保证错误能传播到上层 tools.py）"""
         call_count = 0
 
         @retry_on_error(max_attempts=2, min_wait=0.01, max_wait=0.02)
         def func():
             nonlocal call_count
             call_count += 1
-            raise NotifyError("持续失败")
+            raise NotifyError("持续失败", retryable=True)
 
         with pytest.raises(NotifyError):
             func()

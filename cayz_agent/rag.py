@@ -355,10 +355,19 @@ class RAGManager:
         logger.info("向量库已清空")
 
     def count(self) -> int:
-        """返回向量库中的文档片段总数"""
+        """返回向量库中的文档片段总数。
+
+        P2 修复：异常向上传播，便于 /health/deep 准确探测 ChromaDB 可用性。
+        调用方如需容错请使用 count_safe() 或自行 try/except。
+        """
+        return self._vectorstore._collection.count()
+
+    def count_safe(self) -> int:
+        """容错版 count：异常时返回 0 并记录警告，仅供非关键路径使用。"""
         try:
-            return self._vectorstore._collection.count()
+            return self.count()
         except Exception:
+            logger.warning("count_safe 容错返回 0", exc_info=True)
             return 0
 
     def delete_by_source(self, source: str) -> int:

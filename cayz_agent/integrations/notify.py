@@ -77,7 +77,8 @@ class WeChatNotifier:
             )
             result = response.json()
         except requests.RequestException as e:
-            raise NotifyError("企业微信 Webhook 请求失败", cause=e) from e
+            # P2-1：网络瞬时错误，显式标记 retryable=True 触发重试
+            raise NotifyError("企业微信 Webhook 请求失败", cause=e, retryable=True) from e
         except ValueError as e:
             raise NotifyError("企业微信响应解析失败", cause=e) from e
 

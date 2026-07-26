@@ -16,7 +16,7 @@ from tenacity import (
     RetryCallState,
     before_sleep_log,
     retry,
-    retry_if_exception_type,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential,
 )
@@ -83,7 +83,7 @@ def retry_on_error(max_attempts: int = 3, min_wait: float = 1.0, max_wait: float
     return retry(
         stop=stop_after_attempt(max_attempts),
         wait=wait_exponential(multiplier=min_wait, max=max_wait),
-        retry=retry_if_exception_type(RETRYABLE_EXCEPTIONS),
+        retry=retry_if_exception(_is_retryable),
         before_sleep=before_sleep_log(logger, logging.WARNING),
         after=_on_retry,
         reraise=True,

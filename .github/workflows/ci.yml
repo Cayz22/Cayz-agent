@@ -109,7 +109,9 @@ jobs:
             --ignore-vuln=PYSEC-2026-311
 
       - name: Run Trivy filesystem scan (源码漏洞 + 配置错误)
-        uses: aquasecurity/trivy-action@master
+        # P1 供应链加固：固定 trivy-action 到具体版本 tag，避免 @master 可变引用
+        # 旧实现 @master 上游任何提交（含被入侵后的恶意提交）会立即在下次 CI 生效
+        uses: aquasecurity/trivy-action@0.24.0
         with:
           scan-type: fs
           scan-ref: .
@@ -156,13 +158,31 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Install Trivy
-        run: curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+      - name: Install Trivy (pinned version)
+        # P1 供应链加固：从 GitHub Release 下载固定版本二进制并校验 SHA256
+        # 旧实现 curl|sh 从 main 分支动态拉取安装脚本，脚本内容随时可能变化
+        run: |
+          TRIVY_VERSION=0.55.0
+          curl -sfL -o /tmp/trivy.tar.gz \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -sfL -o /tmp/trivy.sha256 \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz.sha256"
+          # 校验 SHA256（文件格式：<hash>  <filename>）
+          cd /tmp && sha256sum -c trivy.sha256
+          tar -xzf trivy.tar.gz -C /usr/local/bin trivy
+          trivy --version
 
       - name: Trivy 镜像漏洞扫描
+        # P1 修复：扫描实际推送的标签，而非硬编码 :main
+        # 旧实现 tag 发布时扫描的仍是上一次 main 推送的过期镜像，给发布安全以假象
+        # 取 steps.meta.outputs.tags 的第一个标签作为扫描目标
         run: |
-          docker pull ghcr.io/cayz22/cayz-agent:main
-          trivy image --severity HIGH,CRITICAL --exit-code 1 --ignore-unfixed ghcr.io/cayz22/cayz-agent:main
+          # 将多行 tags 转为数组，取第一个
+          TAGS="${{ steps.meta.outputs.tags }}"
+          FIRST_TAG=$(echo "$TAGS" | head -n1 | tr -d ' ')
+          echo "扫描镜像: $FIRST_TAG"
+          docker pull "$FIRST_TAG"
+          trivy image --severity HIGH,CRITICAL --exit-code 1 --ignore-unfixed "$FIRST_TAG"
         env:
           TRIVY_USERNAME: ${{ github.actor }}
           TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}

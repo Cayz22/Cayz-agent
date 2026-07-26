@@ -172,6 +172,7 @@ class TestFetchUrl:
             result = fetch_url.invoke({"url": "http://example.com"})
 
         # 应包含正文内容（去掉 HTML 标签后）
+        # P1 prompt injection 防护：返回内容现在被 <untrusted_content> 标签包裹
         assert "Hello World" in result
 
     def test_http_error_handled(self):
@@ -279,7 +280,9 @@ class TestFileTools:
 
             # 读取
             read_result = read_file.invoke({"file_path": "test.txt"})
-            assert read_result == "Hello 文件"
+            # P2 修复：read_file 返回值已包裹 untrusted_content 标签防止 prompt injection
+            assert "Hello 文件" in read_result
+            assert "<untrusted_content>" in read_result
 
     def test_write_creates_parent_dirs(self, tmp_path):
         """写入应自动创建父目录"""

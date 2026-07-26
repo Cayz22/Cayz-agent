@@ -23,6 +23,7 @@ import time
 from threading import Lock
 
 from .config import get_settings
+from .exceptions import SessionBackendError
 
 logger = logging.getLogger(__name__)
 
@@ -165,36 +166,51 @@ class SessionManager:
                 )
 
     def session_exists(self, thread_id: str) -> bool:
-        """判断会话是否已存在（用于 /chat IDOR 修复：区分「新建」与「越权访问已存在会话」）"""
+        """判断会话是否已存在（用于 /chat IDOR 修复：区分「新建」与「越权访问已存在会话」）。
+
+        Raises:
+            SessionBackendError: SQLite 后端异常（磁盘满/锁超时/文件损坏）。
+                调用方必须 fail-closed，不可将异常视为「不存在」放行请求。
+        """
         if not self._is_sqlite() or not thread_id:
             return False
-        conn = self._get_conn()
+        conn = None
         try:
+            conn = self._get_conn()
             cursor = conn.execute(
                 f"SELECT 1 FROM {_SESSION_ACTIVITY_TABLE} WHERE thread_id = ? LIMIT 1",
                 (thread_id,),
             )
             return cursor.fetchone() is not None
-        except sqlite3.Error:
-            return False
+        except sqlite3.Error as e:
+            # P1 IDOR fail-open 修复：异常时不能返回 False（会让调用方误以为会话不存在而放行）
+            # 改为抛 SessionBackendError，由 api.py 捕获返回 503
+            raise SessionBackendError(f"查询会话存在性失败: {e}", cause=e) from e
         finally:
-            conn.close()
+            if conn is not None:
+                conn.close()
 
     def owns_session(self, thread_id: str, owner: str) -> bool:
-        """判断会话是否归属于指定 owner（用于 /chat IDOR 修复）"""
+        """判断会话是否归属于指定 owner（用于 /chat IDOR 修复）。
+
+        Raises:
+            SessionBackendError: SQLite 后端异常。
+        """
         if not self._is_sqlite() or not thread_id or not owner:
             return False
-        conn = self._get_conn()
+        conn = None
         try:
+            conn = self._get_conn()
             cursor = conn.execute(
                 f"SELECT 1 FROM {_SESSION_ACTIVITY_TABLE} WHERE thread_id = ? AND owner = ? LIMIT 1",
                 (thread_id, owner),
             )
             return cursor.fetchone() is not None
-        except sqlite3.Error:
-            return False
+        except sqlite3.Error as e:
+            raise SessionBackendError(f"查询会话归属失败: {e}", cause=e) from e
         finally:
-            conn.close()
+            if conn is not None:
+                conn.close()
 
     def touch_session(self, thread_id: str, owner: str | None = None):
         """
@@ -251,6 +267,65 @@ class SessionManager:
                     if conn is not None:
                         conn.close()
 
+    def touch_and_get_owner(self, thread_id: str, owner: str | None = None) -> str | None:
+        """P1 IDOR TOCTOU 修复：原子占位并返回会话的真实 owner。
+
+        旧实现 /chat 端点先调 session_exists/owns_session 判定，再调 touch_session 写入，
+        两步之间无事务保护，存在 TOCTOU 竞态：两个并发请求使用相同 thread_id 时，
+        双方 session_exists 都返回 False，IDOR 检查被跳过，导致后到者能越权读写先到者的会话。
+
+        本方法用单条 `INSERT ... ON CONFLICT DO NOTHING` 原子占位，再 `SELECT owner` 返回
+        真实 owner（首次写入者）。调用方据此判定是否越权，从根本上消除竞态。
+
+        Args:
+            thread_id: 会话 ID
+            owner: 当前请求者标识（API Key 哈希或真实 IP）
+
+        Returns:
+            会话的真实 owner（首次占位者）；非 SQLite 后端或无 thread_id 时返回 None
+            （表示后端不支持 owner 跟踪，by design）
+
+        Raises:
+            SessionBackendError: SQLite 后端异常（磁盘满/锁超时/文件损坏）。
+                调用方必须 fail-closed 返回 503，不可视为「新建会话」放行，
+                否则攻击者可利用 DB 异常窗口枚举 thread_id 越权访问他人会话。
+        """
+        if not self._is_sqlite() or not thread_id:
+            return None
+        with self._write_lock:
+            conn = None
+            try:
+                conn = self._get_conn()
+                now = _now()
+                # 原子占位：已存在则不动，不存在则用当前 owner 占位
+                conn.execute(
+                    f"INSERT INTO {_SESSION_ACTIVITY_TABLE} (thread_id, last_active, created_at, owner) "
+                    "VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT(thread_id) DO NOTHING",
+                    (thread_id, now, now, owner),
+                )
+                conn.commit()
+                # 读取真实 owner（占位后的实际归属）
+                cursor = conn.execute(
+                    f"SELECT owner FROM {_SESSION_ACTIVITY_TABLE} WHERE thread_id = ? LIMIT 1",
+                    (thread_id,),
+                )
+                row = cursor.fetchone()
+                real_owner = row["owner"] if row else None
+                # 占位成功时补一次索引（与 touch_session 行为一致）
+                if not self._indexes_ensured:
+                    self._indexes_ensured = self._ensure_checkpoint_indexes(conn)
+                return real_owner
+            except sqlite3.Error as e:
+                # P1 IDOR fail-open 修复：异常时不能返回 None（会让调用方误以为
+                # 「后端不支持 owner 跟踪」而放行请求）。改为抛 SessionBackendError，
+                # 由 api.py 捕获返回 503，确保 fail-closed。
+                logger.warning("touch_and_get_owner 失败: %s", e)
+                raise SessionBackendError(f"原子占位失败: {e}", cause=e) from e
+            finally:
+                if conn is not None:
+                    conn.close()
+
     def _get_conn(self) -> sqlite3.Connection:
         # P1 性能优化：移除热路径上的冗余 PRAGMA 设置
         # - journal_mode=WAL：持久化在 DB 文件头，已在 _init_activity_table 中设置一次，
@@ -296,8 +371,9 @@ class SessionManager:
             logger.debug("非 SQLite 后端，无法列出会话")
             return [], 0
 
-        conn = self._get_conn()
+        conn = None
         try:
+            conn = self._get_conn()
             cursor = conn.cursor()
 
             # P1 分页修复：先查总数（与数据查询用同一 owner_filter，保证一致性）
@@ -349,14 +425,15 @@ class SessionManager:
 
             return sessions, total
 
-        except sqlite3.OperationalError as e:
-            logger.warning("查询会话列表失败（表可能不存在）: %s", e)
-            return [], 0
-        except Exception:
+        except sqlite3.Error as e:
+            logger.warning("查询会话列表失败: %s", e)
+            raise SessionBackendError(f"查询会话列表失败: {e}", cause=e) from e
+        except Exception as e:
             logger.exception("列出会话时发生错误")
-            return [], 0
+            raise SessionBackendError(f"列出会话失败: {e}", cause=e) from e
         finally:
-            conn.close()
+            if conn is not None:
+                conn.close()
 
     def get_session(self, thread_id: str, owner_filter: str | None = None) -> dict | None:
         """
@@ -370,8 +447,9 @@ class SessionManager:
         if not self._is_sqlite():
             return None
 
-        conn = self._get_conn()
+        conn = None
         try:
+            conn = self._get_conn()
             cursor = conn.cursor()
 
             # IDOR 校验：非管理员需验证会话归属
@@ -401,13 +479,15 @@ class SessionManager:
                 "exists": True,
             }
 
-        except sqlite3.OperationalError:
-            return None
-        except Exception:
+        except sqlite3.Error as e:
+            logger.warning("查询会话详情失败: %s", e)
+            raise SessionBackendError(f"查询会话详情失败: {e}", cause=e) from e
+        except Exception as e:
             logger.exception("查询会话详情失败")
-            return None
+            raise SessionBackendError(f"查询会话详情失败: {e}", cause=e) from e
         finally:
-            conn.close()
+            if conn is not None:
+                conn.close()
 
     def delete_session(self, thread_id: str, owner_filter: str | None = None) -> bool:
         """
@@ -423,8 +503,9 @@ class SessionManager:
             return False
 
         with self._write_lock:
-            conn = self._get_conn()
+            conn = None
             try:
+                conn = self._get_conn()
                 cursor = conn.cursor()
 
                 # IDOR 校验：非管理员需验证会话归属
@@ -458,14 +539,15 @@ class SessionManager:
                     logger.info("已删除会话: %s", thread_id)
                 return deleted
 
-            except sqlite3.OperationalError as e:
+            except sqlite3.Error as e:
                 logger.warning("删除会话失败: %s", e)
-                return False
-            except Exception:
+                raise SessionBackendError(f"删除会话失败: {e}", cause=e) from e
+            except Exception as e:
                 logger.exception("删除会话时发生错误")
-                return False
+                raise SessionBackendError(f"删除会话失败: {e}", cause=e) from e
             finally:
-                conn.close()
+                if conn is not None:
+                    conn.close()
 
     def cleanup_expired_sessions(self, max_age_seconds: int = 86400) -> int:
         """

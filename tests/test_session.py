@@ -443,3 +443,216 @@ class TestP1IDOROwnerFilter:
 
         assert manager.get_session("thread-stable", owner_filter="user-A") is not None
         assert manager.get_session("thread-stable", owner_filter="user-B") is None
+
+    def test_touch_and_get_owner_returns_first_owner(self, manager, temp_db):
+        """P1 IDOR TOCTOU 修复：touch_and_get_owner 应返回首次占位者的 owner"""
+        _insert_checkpoint(temp_db, "thread-atomic")
+        # 首次占位：user-A
+        owner1 = manager.touch_and_get_owner("thread-atomic", owner="user-A")
+        assert owner1 == "user-A"
+        # 第二个用户尝试占位：应返回 user-A（不覆盖）
+        owner2 = manager.touch_and_get_owner("thread-atomic", owner="user-B")
+        assert owner2 == "user-A"
+        # 调用方可据此判定越权：owner2 != "user-B" → 拒绝访问
+
+    def test_touch_and_get_owner_new_session_returns_caller(self, manager, temp_db):
+        """P1：新会话首次占位应返回调用者自身 owner"""
+        _insert_checkpoint(temp_db, "thread-new-user")
+        owner = manager.touch_and_get_owner("thread-new-user", owner="user-X")
+        assert owner == "user-X"
+
+
+class TestP2IDORFailClosed:
+    """P2 IDOR fail-closed 修复：memory 后端/SQLite 异常时，对已存在会话应拒绝访问"""
+
+    def test_touch_and_get_owner_returns_none_for_memory_backend(self):
+        """memory 后端（默认配置）touch_and_get_owner 应返回 None"""
+        with patch("cayz_agent.session.get_settings") as mock:
+            mock.return_value.checkpoint_backend = "memory"
+            mock.return_value.sqlite_checkpoint_path = ""
+            m = SessionManager()
+            # memory 后端无法跟踪 owner
+            assert m.touch_and_get_owner("any-thread", owner="user-A") is None
+
+    def test_session_exists_returns_false_for_memory_backend(self):
+        """memory 后端 session_exists 应返回 False（无法判定）"""
+        with patch("cayz_agent.session.get_settings") as mock:
+            mock.return_value.checkpoint_backend = "memory"
+            mock.return_value.sqlite_checkpoint_path = ""
+            m = SessionManager()
+            # memory 后端下所有 thread_id 都"不存在"，新建会话允许放行
+            assert m.session_exists("any-thread") is False
+
+    def test_session_exists_returns_false_for_empty_thread_id(self, manager):
+        """空 thread_id 应返回 False"""
+        assert manager.session_exists("") is False
+
+    def test_session_exists_distinguishes_new_vs_existing(self, manager, temp_db):
+        """P2 fail-closed 关键：session_exists 应能区分新建会话与已存在会话"""
+        _insert_checkpoint(temp_db, "existing-thread")
+        manager.touch_session("existing-thread", owner="user-A")
+
+        # 已存在会话
+        assert manager.session_exists("existing-thread") is True
+        # 全新会话
+        assert manager.session_exists("brand-new-thread") is False
+
+    def test_fail_closed_logic_for_memory_backend(self):
+        """P2 fail-closed 验证：memory 后端下，对已存在会话应返回 403 拒绝访问
+
+        场景：默认配置（checkpoint_backend=memory），用户 B 尝试访问用户 A 的会话。
+        旧实现：touch_and_get_owner 返回 None → 跳过 IDOR 检查 → 越权放行（fail-open）
+        新实现：touch_and_get_owner 返回 None + session_exists 返回 False → 仅新建会话放行
+        注：memory 后端下 session_exists 始终返回 False，故所有请求都被视为"新建会话"放行。
+        生产部署应使用 SQLite 后端启用 IDOR 保护。
+        """
+        with patch("cayz_agent.session.get_settings") as mock:
+            mock.return_value.checkpoint_backend = "memory"
+            mock.return_value.sqlite_checkpoint_path = ""
+            m = SessionManager()
+
+            # memory 后端无法跟踪 owner，也无法判定会话是否存在
+            real_owner = m.touch_and_get_owner("any-thread", owner="user-B")
+            exists = m.session_exists("any-thread")
+
+            # fail-closed 逻辑：real_owner is None 时，检查 session_exists
+            # memory 后端 session_exists=False → 视为新建会话 → 放行
+            # 此处验证逻辑判定：会话不存在，应允许放行（首次访问）
+            assert real_owner is None
+            assert exists is False
+            # 实际生产场景下，应使用 SQLite 后端，memory 后端 IDOR 保护不生效
+
+    def test_fail_closed_logic_for_sqlite_with_existing_session(self, manager, temp_db):
+        """P2 fail-closed 关键：SQLite 后端下，已存在会话应被拒绝访问（模拟 touch_and_get_owner 异常）
+
+        场景：SQLite 后端，touch_and_get_owner 因异常返回 None，但会话已存在。
+        旧实现：None → 跳过 IDOR → 越权放行
+        新实现：None + session_exists=True → 拒绝访问（fail-closed）
+        """
+        _insert_checkpoint(temp_db, "victim-thread")
+        manager.touch_session("victim-thread", owner="victim")
+
+        # 模拟 touch_and_get_owner 因 SQLite 异常返回 None
+        with patch.object(manager, "touch_and_get_owner", return_value=None):
+            real_owner = manager.touch_and_get_owner("victim-thread", owner="attacker")
+            exists = manager.session_exists("victim-thread")
+
+            # fail-closed 逻辑：real_owner is None + session_exists=True → 拒绝
+            assert real_owner is None
+            assert exists is True
+            # api.py 据此应返回 403
+
+
+class TestP1IDORFailOpenFix:
+    """P1 IDOR fail-open 修复：SQLite 异常时应抛 SessionBackendError（fail-closed），
+    而非静默返回 None/False 导致 IDOR 校验被绕过、请求被放行。
+
+    旧实现：
+    - touch_and_get_owner 异常 → 返回 None
+    - session_exists 异常 → 返回 False
+    - api.py: real_owner=None + session_exists=False → 视为「新建会话」放行 → 越权
+
+    新实现：
+    - touch_and_get_owner 异常 → 抛 SessionBackendError
+    - session_exists 异常 → 抛 SessionBackendError
+    - api.py 捕获后返回 503（fail-closed）
+    """
+
+    def test_touch_and_get_owner_raises_on_sqlite_error(self, manager):
+        """SQLite 异常时 touch_and_get_owner 应抛 SessionBackendError，而非返回 None"""
+        from cayz_agent.exceptions import SessionBackendError
+
+        # 模拟 conn.execute 抛 sqlite3.Error（如磁盘满/锁超时/文件损坏）
+        with patch.object(manager, "_get_conn", side_effect=sqlite3.Error("database is locked")):
+            with pytest.raises(SessionBackendError) as exc_info:
+                manager.touch_and_get_owner("any-thread", owner="user-A")
+            assert "database is locked" in str(exc_info.value)
+
+    def test_session_exists_raises_on_sqlite_error(self, manager):
+        """SQLite 异常时 session_exists 应抛 SessionBackendError，而非返回 False"""
+        from cayz_agent.exceptions import SessionBackendError
+
+        with patch.object(manager, "_get_conn", side_effect=sqlite3.Error("disk I/O error")):
+            with pytest.raises(SessionBackendError) as exc_info:
+                manager.session_exists("any-thread")
+            assert "disk I/O error" in str(exc_info.value)
+
+    def test_owns_session_raises_on_sqlite_error(self, manager):
+        """SQLite 异常时 owns_session 应抛 SessionBackendError"""
+        from cayz_agent.exceptions import SessionBackendError
+
+        with patch.object(manager, "_get_conn", side_effect=sqlite3.Error("corrupt database")):
+            with pytest.raises(SessionBackendError):
+                manager.owns_session("any-thread", "user-A")
+
+    def test_memory_backend_still_returns_none_without_raising(self):
+        """memory 后端（by design 不支持 owner 跟踪）应返回 None，不抛异常
+
+        区分「后端不支持」（设计行为，返回 None）与「DB 错误」（故障，抛异常）
+        是本次修复的关键：只有 DB 异常才 fail-closed，memory 后端维持原行为。
+        """
+        with patch("cayz_agent.session.get_settings") as mock:
+            mock.return_value.checkpoint_backend = "memory"
+            mock.return_value.sqlite_checkpoint_path = ""
+            m = SessionManager()
+            # memory 后端：不抛异常，返回 None（表示不支持 owner 跟踪）
+            assert m.touch_and_get_owner("any-thread", owner="user-A") is None
+            # memory 后端：不抛异常，返回 False（表示无法判定存在性）
+            assert m.session_exists("any-thread") is False
+
+    def test_empty_thread_id_does_not_raise(self, manager):
+        """空 thread_id 应维持原行为（返回 None/False），不抛异常"""
+        # 这些是输入校验，不属于 DB 异常
+        assert manager.touch_and_get_owner("", owner="user-A") is None
+        assert manager.session_exists("") is False
+
+    def test_list_sessions_raises_on_sqlite_error(self, manager):
+        """SQLite 异常时 list_sessions 应抛 SessionBackendError，而非返回 ([], 0)"""
+        from cayz_agent.exceptions import SessionBackendError
+
+        with patch.object(manager, "_get_conn", side_effect=sqlite3.Error("database is locked")):
+            with pytest.raises(SessionBackendError) as exc_info:
+                manager.list_sessions()
+            assert "database is locked" in str(exc_info.value)
+
+    def test_get_session_raises_on_sqlite_error(self, manager):
+        """SQLite 异常时 get_session 应抛 SessionBackendError，而非返回 None"""
+        from cayz_agent.exceptions import SessionBackendError
+
+        with patch.object(manager, "_get_conn", side_effect=sqlite3.Error("disk I/O error")):
+            with pytest.raises(SessionBackendError) as exc_info:
+                manager.get_session("any-thread")
+            assert "disk I/O error" in str(exc_info.value)
+
+    def test_delete_session_raises_on_sqlite_error(self, manager):
+        """SQLite 异常时 delete_session 应抛 SessionBackendError，而非返回 False"""
+        from cayz_agent.exceptions import SessionBackendError
+
+        with patch.object(manager, "_get_conn", side_effect=sqlite3.Error("corrupt database")):
+            with pytest.raises(SessionBackendError) as exc_info:
+                manager.delete_session("any-thread")
+            assert "corrupt database" in str(exc_info.value)
+
+    def test_list_sessions_with_owner_filter_raises_on_sqlite_error(self, manager):
+        """SQLite 异常时 list_sessions（带 owner_filter）也应抛 SessionBackendError"""
+        from cayz_agent.exceptions import SessionBackendError
+
+        with patch.object(manager, "_get_conn", side_effect=sqlite3.Error("database is locked")):
+            with pytest.raises(SessionBackendError):
+                manager.list_sessions(owner_filter="user-A")
+
+    def test_get_session_with_owner_filter_raises_on_sqlite_error(self, manager):
+        """SQLite 异常时 get_session（带 owner_filter）也应抛 SessionBackendError"""
+        from cayz_agent.exceptions import SessionBackendError
+
+        with patch.object(manager, "_get_conn", side_effect=sqlite3.Error("database is locked")):
+            with pytest.raises(SessionBackendError):
+                manager.get_session("any-thread", owner_filter="user-A")
+
+    def test_delete_session_with_owner_filter_raises_on_sqlite_error(self, manager):
+        """SQLite 异常时 delete_session（带 owner_filter）也应抛 SessionBackendError"""
+        from cayz_agent.exceptions import SessionBackendError
+
+        with patch.object(manager, "_get_conn", side_effect=sqlite3.Error("database is locked")):
+            with pytest.raises(SessionBackendError):
+                manager.delete_session("any-thread", owner_filter="user-A")

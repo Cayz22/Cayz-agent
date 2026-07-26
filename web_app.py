@@ -509,8 +509,12 @@ st.markdown('''
 ''', unsafe_allow_html=True)
 
 # 3. 初始化 Agent 图与 Session State
+# P1 安全修复：web_app 直连 graph 默认用 admin scope，含全部危险工具（send_email、
+# write_file、python_repl 等），且 Streamlit 无原生鉴权。改为 readonly scope：
+# 仅含 get_current_time / web_search / knowledge_search / calculate 等查询类工具，
+# 写操作（知识库上传/删除、会话删除）一律走侧边栏的 HTTP API 调用（受鉴权保护）
 if "app" not in st.session_state:
-    st.session_state.app = create_graph()
+    st.session_state.app = create_graph(scope="readonly")
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "thread_id" not in st.session_state:

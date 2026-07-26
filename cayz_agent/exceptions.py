@@ -63,6 +63,22 @@ class ToolError(CayzAgentError):
     """工具执行错误"""
 
 
+# ===== 会话 =====
+
+
+class SessionError(CayzAgentError):
+    """会话管理相关错误"""
+
+
+class SessionBackendError(SessionError):
+    """会话后端不可用（如 SQLite 异常：磁盘满/锁超时/文件损坏）。
+
+    与「后端不支持 owner 跟踪」（如 MemorySaver，by design 返回 None）区分：
+    后者属于设计行为，前者属于运行时故障，调用方应 fail-closed 返回 503，
+    而非放行请求绕过 IDOR 校验。
+    """
+
+
 # ===== RAG =====
 
 
