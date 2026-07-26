@@ -162,14 +162,17 @@ jobs:
         # P1 供应链加固：从 GitHub Release 下载固定版本二进制并校验 SHA256
         # 旧实现 curl|sh 从 main 分支动态拉取安装脚本，脚本内容随时可能变化
         run: |
+          set -euo pipefail
           TRIVY_VERSION=0.55.0
-          curl -sfL -o /tmp/trivy.tar.gz \
-            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
-          curl -sfL -o /tmp/trivy.sha256 \
-            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz.sha256"
-          # 校验 SHA256（文件格式：<hash>  <filename>）
-          cd /tmp && sha256sum -c trivy.sha256
-          tar -xzf trivy.tar.gz -C /usr/local/bin trivy
+          BASE="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}"
+          curl --retry 3 -sfL -o /tmp/trivy.tar.gz \
+            "${BASE}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl --retry 3 -sfL -o /tmp/trivy_checksums.txt \
+            "${BASE}/trivy_${TRIVY_VERSION}_checksums.txt"
+          want=$(grep -F "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" /tmp/trivy_checksums.txt | awk '{print $1}')
+          got=$(sha256sum /tmp/trivy.tar.gz | awk '{print $1}')
+          [ -n "${want}" ] && [ "${want}" = "${got}" ]
+          tar -xzf /tmp/trivy.tar.gz -C /usr/local/bin trivy
           trivy --version
 
       - name: Trivy 镜像漏洞扫描
