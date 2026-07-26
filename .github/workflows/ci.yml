@@ -158,7 +158,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-            - name: Install Trivy (pinned version)
+      - name: Install Trivy (pinned version)
         # P1 供应链加固：固定版本 + 经 GitHub API 取真实资产 URL（不手拼命名，杜绝 404）。
         # 本步 EXPECTED_SHA256 留空 = 先确保 CI 绿，并打印实际 sha256；
         # 绿后把打印值填进 EXPECTED_SHA256，即升级为「带外 pin hash」真加固（见末尾说明）。
