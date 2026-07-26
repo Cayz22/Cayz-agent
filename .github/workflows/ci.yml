@@ -165,7 +165,7 @@ jobs:
         env:
           TRIVY_VERSION: "0.69.3"          # 0.60.0 已被供应链善后清理→404；0.69.4 是投毒版禁用
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          EXPECTED_SHA256: ""              # 留空=只打印不校验；填 64 位 hex=启用带外校验
+          EXPECTED_SHA256: "1816b632dfe529869c740c0913e36bd1629cb7688bd5634f4a858c1d57c88b75"              # 留空=只打印不校验；填 64 位 hex=启用带外校验
         run: |
           set -euo pipefail
           API="https://api.github.com/repos/aquasecurity/trivy/releases/tags/v${TRIVY_VERSION}"
