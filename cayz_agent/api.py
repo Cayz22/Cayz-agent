@@ -36,6 +36,7 @@ from pydantic import BaseModel, Field
 from . import __version__, app_state
 from .alerts import check_alerts, start_alert_watcher, stop_alert_watcher
 from .config import get_settings, setup_logging
+from .exceptions import SessionBackendError
 from .graph import create_graph
 from .middleware import _SCOPE_LEVEL, setup_middleware
 from .monitor import (
@@ -49,7 +50,6 @@ from .monitor import (
     record_session_start,
 )
 from .sanitizers import detect_sensitive_info, sanitize_exception, sanitize_text
-from .exceptions import SessionBackendError
 from .session import get_session_manager
 from .validators import (
     MAX_BATCH_ITEMS,
@@ -765,9 +765,7 @@ async def chat_stream(req: ChatRequest, request: Request):
             # 旧实现无论 auth_required 都返回 sanitize_exception(e)，会泄露框架版本、
             # 库内部异常类型、SQL 错误、API Key 失效状态等，便于攻击者指纹后端
             err_msg = (
-                "Agent 执行出错，请稍后重试"
-                if settings.auth_required
-                else f"Agent 执行出错: {sanitize_exception(e)}"
+                "Agent 执行出错，请稍后重试" if settings.auth_required else f"Agent 执行出错: {sanitize_exception(e)}"
             )
             yield f"data: {json.dumps({'error': err_msg, 'thread_id': tid}, ensure_ascii=False)}\n\n"
         finally:

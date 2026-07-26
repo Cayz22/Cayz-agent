@@ -569,8 +569,7 @@ def _check_ssrf(url: str) -> tuple[str | None, list[str]]:
             or ip.is_unspecified
         ):
             return (
-                f"错误：禁止访问非公网地址 {ip}（SSRF 防护）。"
-                "fetch_url 仅允许访问公网 URL。",
+                f"错误：禁止访问非公网地址 {ip}（SSRF 防护）。" "fetch_url 仅允许访问公网 URL。",
                 [],
             )
         public_ips.append(str(ip))
@@ -610,8 +609,9 @@ def fetch_url(url: str) -> str:
         return err
 
     settings = get_settings()
-    import httpx
     import urllib.parse as _up
+
+    import httpx
 
     def _build_ip_url(original_url: str, ips: list[str]) -> tuple[str, str | None]:
         """将 URL 中的域名替换为 IP，返回 (ip_url, original_host)。
@@ -852,17 +852,16 @@ def _python_repl_child(code_str: str, result_queue) -> None:
     注意：_SAFE_GLOBALS 在子进程内部重新构造（spawn 模式无法 pickle module 对象），
     这也顺便修复了 P2 共享状态污染问题——子进程对 globals 的修改不会影响父进程。
     """
-    import io
-    from contextlib import redirect_stderr, redirect_stdout
-
     # 子进程内部构造安全 globals（与父进程 _SAFE_GLOBALS 等价）
     import collections
     import datetime
+    import io
     import itertools
     import json
     import math
     import re
     import statistics
+    from contextlib import redirect_stderr, redirect_stdout
 
     _SAFE_BUILTINS = {
         "print": print,
@@ -1084,9 +1083,7 @@ def python_repl(code: str) -> str:
             # P0：拦截反射函数调用（getattr/setattr/hasattr/delattr 可绕过 Attribute 检测）
             if isinstance(node, _ast.Call) and isinstance(node.func, _ast.Name):
                 if node.func.id in ("getattr", "setattr", "hasattr", "delattr", "vars", "dir"):
-                    return (
-                        f"错误: 禁止使用反射函数 {node.func.id}（防止沙箱逃逸）。"
-                    )
+                    return f"错误: 禁止使用反射函数 {node.func.id}（防止沙箱逃逸）。"
     except SyntaxError:
         # 语法错误交给后续 exec 抛出，不在此处拦截
         pass

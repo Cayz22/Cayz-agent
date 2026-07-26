@@ -95,12 +95,12 @@ def run_cleanups(timeout: float = 30.0) -> int:
         hook_name = getattr(hook, "__name__", repr(hook))
         result_holder: dict = {"done": False, "exc": None}
 
-        def _runner():
+        def _runner(h=hook, rh=result_holder):
             try:
-                hook()
-                result_holder["done"] = True
+                h()
+                rh["done"] = True
             except Exception as e:  # noqa: BLE001
-                result_holder["exc"] = e
+                rh["exc"] = e
 
         # daemon=True：进程退出时线程会被强制回收，避免 hook 阻塞导致进程无法退出
         t = threading.Thread(target=_runner, name=f"cleanup-{hook_name}", daemon=True)

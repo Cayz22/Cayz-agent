@@ -336,11 +336,7 @@ def _build_multi_agent_graph():
         messages = state.get("messages", [])
         last_message = messages[-1] if messages else None
         # 如果最后一条是 AIMessage 且前一条是 HumanMessage，说明是验证拒绝
-        if (
-            isinstance(last_message, AIMessage)
-            and len(messages) >= 2
-            and isinstance(messages[-2], HumanMessage)
-        ):
+        if isinstance(last_message, AIMessage) and len(messages) >= 2 and isinstance(messages[-2], HumanMessage):
             return END
         return "router"
 
