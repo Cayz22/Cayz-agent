@@ -37,6 +37,10 @@ FROM python:3.13.7-slim AS runtime
 
 WORKDIR /app
 
+# 安全加固：更新系统包以修复已知漏洞（Trivy 镜像扫描前置条件）
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
 # 从构建阶段复制已安装好依赖的 venv
 COPY --from=builder /build/venv /app/venv
 # 从构建阶段复制应用代码
