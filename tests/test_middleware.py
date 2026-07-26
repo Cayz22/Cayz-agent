@@ -14,6 +14,7 @@ from cayz_agent.middleware import (
     RequestBodyLimitMiddleware,
     _extract_api_key,
     _get_client_id,
+    hash_client_id,
     setup_middleware,
 )
 
@@ -65,6 +66,51 @@ class TestExtractApiKey:
         scope = {"type": "http", "method": "GET", "headers": []}
         req = Request(scope)
         assert _extract_api_key(req) is None
+
+
+class TestHashClientId:
+    """P0 安全加固：hash_client_id 测试"""
+
+    def test_hash_is_full_sha256_length(self):
+        """P0：哈希结果应为完整 SHA256 hex（64 字符），而非截断的 16 字符"""
+        with patch("cayz_agent.middleware.get_settings") as mock:
+            mock.return_value.api_key_hash_secret = ""
+            result = hash_client_id("test-api-key-12345")
+            # key: 前缀 + 64 字符 hex
+            assert result.startswith("key:")
+            assert len(result) == 4 + 64
+
+    def test_hash_with_secret_uses_hmac(self):
+        """P0：配置 secret 时应使用 HMAC-SHA256，结果与无 secret 不同"""
+        with patch("cayz_agent.middleware.get_settings") as mock:
+            mock.return_value.api_key_hash_secret = ""
+            digest_no_secret = hash_client_id("test-key")
+
+            mock.return_value.api_key_hash_secret = "my-server-secret"
+            digest_with_secret = hash_client_id("test-key")
+
+            assert digest_no_secret != digest_with_secret
+            assert len(digest_with_secret) == 4 + 64
+
+    def test_hash_is_idempotent(self):
+        """已哈希的输入应幂等返回（不重复哈希）"""
+        with patch("cayz_agent.middleware.get_settings") as mock:
+            mock.return_value.api_key_hash_secret = ""
+            first = hash_client_id("test-key")
+            second = hash_client_id(first)  # 传入已哈希值
+            assert first == second
+
+    def test_hash_deterministic_same_input(self):
+        """相同输入应产生相同哈希（无 secret 时）"""
+        with patch("cayz_agent.middleware.get_settings") as mock:
+            mock.return_value.api_key_hash_secret = ""
+            assert hash_client_id("abc") == hash_client_id("abc")
+
+    def test_empty_input_returns_empty(self):
+        """空输入应原样返回"""
+        with patch("cayz_agent.middleware.get_settings") as mock:
+            mock.return_value.api_key_hash_secret = ""
+            assert hash_client_id("") == ""
 
 
 class TestAPIKeyAuth:
@@ -195,6 +241,46 @@ class TestAuthEnforcement:
             # 不带 Key 返回 401
             resp = client.post("/chat")
             assert resp.status_code == 401
+
+    def test_auth_fail_rate_limit_returns_429(self):
+        """P0 安全修复：鉴权失败次数超限应返回 429，防止暴力枚举 API Key"""
+        with patch("cayz_agent.middleware.get_settings") as mock:
+            mock.return_value.api_key = "secret-key"
+            mock.return_value.write_api_keys = ""
+            mock.return_value.readonly_api_keys = ""
+            mock.return_value.auth_required = True
+            mock.return_value.rate_limit_per_minute = 0  # 关闭常规限流，仅测鉴权失败限流
+            mock.return_value.trust_forwarded_headers = False
+            mock.return_value.api_key_hash_secret = ""
+            app = _build_test_app()
+            client = TestClient(app)
+            # 前 10 次返回 401（_ANON_FAIL_LIMIT = 10）
+            for i in range(10):
+                resp = client.post("/chat", headers={"X-API-Key": f"wrong-{i}"})
+                assert resp.status_code == 401, f"第 {i + 1} 次应返回 401"
+            # 第 11 次应返回 429
+            resp = client.post("/chat", headers={"X-API-Key": "wrong-11"})
+            assert resp.status_code == 429
+            assert "鉴权失败次数过多" in resp.json()["detail"]
+
+    def test_valid_key_bypasses_fail_limit(self):
+        """P0：合法 Key 不应被鉴权失败限流桶拦截（即使之前有失败请求）"""
+        with patch("cayz_agent.middleware.get_settings") as mock:
+            mock.return_value.api_key = "secret-key"
+            mock.return_value.write_api_keys = ""
+            mock.return_value.readonly_api_keys = ""
+            mock.return_value.auth_required = True
+            mock.return_value.rate_limit_per_minute = 0
+            mock.return_value.trust_forwarded_headers = False
+            mock.return_value.api_key_hash_secret = ""
+            app = _build_test_app()
+            client = TestClient(app)
+            # 制造几次失败
+            for _ in range(5):
+                client.post("/chat", headers={"X-API-Key": "wrong"})
+            # 合法 Key 仍应放行
+            resp = client.post("/chat", headers={"X-API-Key": "secret-key"})
+            assert resp.status_code == 200
 
 
 class TestRateLimit:
@@ -782,6 +868,8 @@ class TestM3HTTPSRedirect:
             mock.return_value.auth_required = False
             mock.return_value.rate_limit_per_minute = 0
             mock.return_value.force_https = True
+            # P0 修复：X-Forwarded-Proto 现在受 trust_forwarded_headers 开关约束
+            mock.return_value.trust_forwarded_headers = True
             app = _build_test_app()
             client = TestClient(app)
             # 通过 X-Forwarded-Proto: https 模拟反向代理后的 HTTPS 请求
@@ -815,6 +903,8 @@ class TestM3HTTPSRedirect:
             mock.return_value.auth_required = False
             mock.return_value.rate_limit_per_minute = 0
             mock.return_value.force_https = True
+            # P0 修复：X-Forwarded-Proto 现在受 trust_forwarded_headers 开关约束
+            mock.return_value.trust_forwarded_headers = True
             app = _build_test_app()
             client = TestClient(app)
             # 多级代理场景：client, proxy1, proxy2
@@ -909,8 +999,12 @@ class TestM4RequestBodyLimit:
             resp = client.post("/chat", json={"msg": big_body})
             assert resp.status_code == 200
 
-    def test_invalid_content_length_header_passes_through(self):
-        """非法 Content-Length 头（非数字）应放行交给后续处理"""
+    def test_invalid_content_length_header_rejected(self):
+        """P0 安全修复：非法 Content-Length 头（非数字）应返回 400 拒绝
+
+        旧实现放行交给后续处理，导致 limited_receive 包装失效，
+        攻击者可发送 Content-Length: abc 的分块请求绕过 max_request_body_size 防护（DoS）
+        """
         with patch("cayz_agent.middleware.get_settings") as mock:
             self._mock_settings(mock, max_size=10)
             app = _build_test_app()
@@ -921,8 +1015,8 @@ class TestM4RequestBodyLimit:
                 content=b'{"msg": "hi"}',
                 headers={"Content-Length": "abc", "Content-Type": "application/json"},
             )
-            # 非法头交给后续处理，应正常处理（TestClient/httpx 会重新计算）
-            assert resp.status_code == 200
+            # P0 修复后：非法 Content-Length 直接 400 拒绝，不再放行
+            assert resp.status_code == 400
 
     def test_body_exactly_at_limit_passes(self):
         """body 大小恰好等于限制时应放行（边界条件，> 才拦截）"""

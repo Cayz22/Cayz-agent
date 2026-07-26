@@ -101,6 +101,10 @@ class Settings(BaseSettings):
     readonly_api_keys: str = ""
     # 是否强制要求鉴权（True 时 api_key 为空则非公开端点全部拒绝，防止生产裸奔）
     auth_required: bool = True
+    # P0 安全加固：API Key 哈希化的服务端密钥（HMAC-SHA256）
+    # 用于 hash_client_id() 防止 DB 泄露后离线预计算彩虹表。未配置时回退到无密钥 SHA256
+    # 生产环境建议通过 API_KEY_HASH_SECRET 环境变量配置 32+ 字符随机串（如 secrets.token_urlsafe(32)）
+    api_key_hash_secret: str = ""
     # 限流：每分钟每个客户端最大请求数（0 表示不限制）
     rate_limit_per_minute: int = 60
     # 写操作端点（知识库上传/删除/会话删除）的独立限流（每分钟每客户端，0 表示不额外限制）

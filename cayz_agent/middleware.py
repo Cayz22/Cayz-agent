@@ -35,21 +35,32 @@ _API_KEY_HASH_PREFIX = "key:"
 def hash_client_id(client_id: str) -> str:
     """P1 安全修复：将 API Key 哈希化作为 owner 标识，避免明文存储到 session_activity 表。
 
-    - API Key（来自 Authorization/X-API-Key）→ sha256 哈希前缀 + 前 16 位 hex
+    - API Key（来自 Authorization/X-API-Key）→ HMAC-SHA256（带服务端密钥）完整 64 位 hex
     - IP 地址（无 Key 回退路径）→ 原值保留（IP 非机密信息，且需保留用于审计/限流）
 
     哈希化目的：DB 文件泄露时不暴露原始 API Key，防止全量 Key 接管。
     保留 IP 明文：限流维度需要原始 IP；且 IP 本身不构成机密凭证。
+
+    P0 安全加固：
+    - 使用完整 SHA256 hex（64 字符 / 256 bit），避免 64 bit 截断带来的生日攻击碰撞风险
+    - 引入 HMAC + 服务端密钥（settings.api_key_hash_secret），防止攻击者离线预计算彩虹表
+      密钥未配置时回退到无密钥 SHA256（仍优于截断），并发出 WARNING
     """
     if not client_id:
         return client_id
-    # 简单启发式：API Key 通常较长（>= 16 字符）且不以数字开头（IP 以数字开头）
-    # 更稳妥：由调用方传入时已知道是 Key 还是 IP，但为兼容旧调用，这里用前缀判断
-    # 中间件 dispatch 中会对 API Key 显式加前缀后再调用本函数
+    # 已哈希，幂等返回
     if client_id.startswith(_API_KEY_HASH_PREFIX):
-        # 已哈希，幂等返回
         return client_id
-    digest = hashlib.sha256(client_id.encode("utf-8")).hexdigest()[:16]
+    settings = get_settings()
+    secret = getattr(settings, "api_key_hash_secret", "")
+    # 严格类型检查：测试 mock 中 secret 可能是 MagicMock 对象，需回退到空字符串
+    if not isinstance(secret, str):
+        secret = ""
+    if secret:
+        digest = hmac.new(secret.encode("utf-8"), client_id.encode("utf-8"), hashlib.sha256).hexdigest()
+    else:
+        # 密钥未配置：仍用无密钥 SHA256（完整长度），不致命但少了预计算防护
+        digest = hashlib.sha256(client_id.encode("utf-8")).hexdigest()
     return f"{_API_KEY_HASH_PREFIX}{digest}"
 
 
@@ -135,9 +146,20 @@ def _resolve_scope(provided_key: str | None, settings) -> str | None:
 class APIKeyAuthMiddleware(BaseHTTPMiddleware):
     """API Key 鉴权中间件（含权限分级）"""
 
+    # P0 安全修复：鉴权失败请求的独立限流桶，按真实 IP 限流
+    # 防止攻击者用任意伪造的 API Key 高频请求（401 响应仍消耗服务器资源）
+    # 默认每 IP 每分钟 10 次失败请求，超过直接 429
+    _ANON_FAIL_LIMIT = 10
+    _ANON_FAIL_WINDOW = 60  # 秒
+    _SWEEP_INTERVAL = 300
+
     def __init__(self, app, public_paths: set | None = None):
         super().__init__(app)
         self.public_paths = public_paths or _PUBLIC_PATHS
+        # 鉴权失败计数桶：{ip: deque[timestamps]}
+        self._fail_hits: dict[str, deque] = defaultdict(deque)
+        self._lock = Lock()
+        self._last_sweep = time.time()
 
     async def dispatch(self, request: Request, call_next):
         settings = get_settings()
@@ -153,6 +175,15 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
             provided = _extract_api_key(request)
             scope = _resolve_scope(provided, settings)
             if scope is None:
+                # P0 安全修复：鉴权失败也走限流，按真实 IP 限制失败次数
+                # 防止暴力枚举 API Key 与无差别 DoS（401 响应仍消耗资源）
+                client_ip = _get_real_ip(request)
+                if self._check_fail_limit(client_ip):
+                    return JSONResponse(
+                        status_code=429,
+                        content={"detail": "鉴权失败次数过多，请稍后再试"},
+                        headers={"Retry-After": "60"},
+                    )
                 return JSONResponse(
                     status_code=401,
                     content={"detail": "无效或缺失的 API Key"},
@@ -180,6 +211,30 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         request.state.scope = "admin"
         request.state.client_id = _get_real_ip(request)
         return await call_next(request)
+
+    def _check_fail_limit(self, client_ip: str) -> bool:
+        """检查鉴权失败限流，返回 True 表示超限（应返回 429）
+
+        滑动窗口算法：保留最近 60s 内的失败时间戳，超过 _ANON_FAIL_LIMIT 即拒绝
+        """
+        if not client_ip:
+            client_ip = "unknown"
+        now = time.time()
+        window_start = now - self._ANON_FAIL_WINDOW
+        with self._lock:
+            # 定期扫描清理空 deque
+            if now - self._last_sweep > self._SWEEP_INTERVAL:
+                empty_keys = [k for k, dq in self._fail_hits.items() if not dq or dq[-1] < window_start]
+                for k in empty_keys:
+                    self._fail_hits.pop(k, None)
+                self._last_sweep = now
+            hits = self._fail_hits[client_ip]
+            while hits and hits[0] < window_start:
+                hits.popleft()
+            if len(hits) >= self._ANON_FAIL_LIMIT:
+                return True
+            hits.append(now)
+            return False
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -347,7 +402,12 @@ class HTTPSRedirectMiddleware(BaseHTTPMiddleware):
         # 检测当前请求是否已是 HTTPS
         # 1. 直连场景：request.url.scheme
         # 2. 反向代理场景：X-Forwarded-Proto 头（nginx/Caddy/Traefik 设置）
-        forwarded_proto = request.headers.get("X-Forwarded-Proto", "").split(",")[0].strip().lower()
+        # P0 安全修复：仅在 trust_forwarded_headers=True 时才信任 X-Forwarded-Proto
+        # 旧实现无条件信任该头，应用直接暴露时攻击者可发送 X-Forwarded-Proto: https
+        # 跳过 HTTPS 重定向，导致 API Key 走 HTTP 明文泄露给中间人
+        forwarded_proto = ""
+        if settings.trust_forwarded_headers:
+            forwarded_proto = request.headers.get("X-Forwarded-Proto", "").split(",")[0].strip().lower()
         is_https = request.url.scheme == "https" or forwarded_proto == "https"
 
         if is_https:
@@ -392,8 +452,13 @@ class RequestBodyLimitMiddleware(BaseHTTPMiddleware):
             try:
                 declared_size = int(content_length)
             except ValueError:
-                # 非法 Content-Length 头，交给后续处理
-                return await call_next(request)
+                # P0 安全修复：非法 Content-Length 头应直接拒绝（400），而非放行绕过请求体限制
+                # 旧实现 return await call_next(request) 会让 limited_receive 包装失效，
+                # 攻击者可发送 Content-Length: abc 的分块请求绕过 max_request_body_size 防护（DoS）
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": "非法的 Content-Length 头"},
+                )
             if declared_size > max_size:
                 return JSONResponse(
                     status_code=413,

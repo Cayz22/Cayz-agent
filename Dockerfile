@@ -54,7 +54,9 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
 # 数据持久化目录
-RUN mkdir -p /data
+# P0 修复：预先创建所有挂载子目录并 chown，避免命名卷首次挂载时 Docker 以 root 创建目录
+# 导致 appuser(uid 1000) 无法写入（SQLite checkpoint / ChromaDB / 备份全部失败）
+RUN mkdir -p /data/checkpoints /data/chroma_db /data/backups
 
 # 创建非 root 用户并以该用户运行（避免容器逃逸时直接获得 root 权限）
 # P3：--create-home 创建家目录（部分库需要 HOME 环境变量）；--shell /bin/false 禁止登录

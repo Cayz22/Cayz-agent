@@ -22,7 +22,7 @@ nginx:
     - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     - ./nginx/certs:/etc/nginx/certs:ro
   depends_on:
-    api:
+    api_tls:
       condition: service_healthy
   restart: unless-stopped
   networks:
@@ -99,6 +99,8 @@ web:
     - .env
   environment:
     - CHROMA_PERSIST_DIR=/data/chroma_db
+    # P0 修复：web 容器需通过服务名访问 api 容器，不能用 localhost（跨容器无法访问）
+    - WEB_API_BASE=http://api:8000
   volumes:
     # P3：web 仅需读取 chroma_db，不需 checkpoints/backups
     - chroma_data:/data/chroma_db
@@ -124,6 +126,8 @@ web_tls:
     - .env
   environment:
     - CHROMA_PERSIST_DIR=/data/chroma_db
+    # P0 修复：web 容器需通过服务名访问 api_tls 容器，不能用 localhost
+    - WEB_API_BASE=http://api_tls:8000
   volumes:
     - chroma_data:/data/chroma_db
   restart: unless-stopped

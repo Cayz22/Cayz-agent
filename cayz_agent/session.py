@@ -214,8 +214,12 @@ class SessionManager:
             return
         with self._write_lock:
             for attempt in range(2):  # P1：最多重试 1 次
-                conn = self._get_conn()
+                # P0 修复：conn 在 try 内获取，确保 except 分支也能正确 close
+                # 旧实现 conn 在 for 循环开头获取，except 中 continue 进入下一轮时
+                # 上一轮的 conn 不会被 close，造成 SQLite 连接泄漏
+                conn = None
                 try:
+                    conn = self._get_conn()
                     now = _now()
                     # ON CONFLICT 时仅更新 last_active，保留首次写入的 owner
                     conn.execute(
@@ -244,7 +248,8 @@ class SessionManager:
                     logger.warning("更新会话活跃时间失败: %s", e)
                     return
                 finally:
-                    conn.close()
+                    if conn is not None:
+                        conn.close()
 
     def _get_conn(self) -> sqlite3.Connection:
         # P1 性能优化：移除热路径上的冗余 PRAGMA 设置

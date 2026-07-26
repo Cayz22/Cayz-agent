@@ -349,6 +349,27 @@ class TestPythonRepl:
         result = python_repl.invoke({"code": "print(undefined_var)"})
         assert "错误" in result or "Error" in result
 
+    def test_infinite_while_loop_rejected(self):
+        """P0 安全加固：while True 无 break 的死循环应被 AST 静态分析拒绝"""
+        result = python_repl.invoke({"code": "while True:\n    pass"})
+        assert "无限循环" in result
+        assert "拒绝执行" in result
+
+    def test_while_true_with_break_allowed(self):
+        """P0：while True 含 break 应允许执行（带退出条件）"""
+        result = python_repl.invoke({"code": "i = 0\nwhile True:\n    i += 1\n    if i >= 3:\n        break\nprint(i)"})
+        assert "3" in result
+
+    def test_while_nonzero_constant_rejected(self):
+        """P0：while 1 无 break 也应被拒绝（非常量真值检测）"""
+        result = python_repl.invoke({"code": "while 1:\n    x = 1"})
+        assert "无限循环" in result
+
+    def test_while_falsy_condition_allowed(self):
+        """P0：while False 不应被拦截（条件为假不会死循环）"""
+        result = python_repl.invoke({"code": "while False:\n    print('never')\nprint('done')"})
+        assert "done" in result
+
 
 # ============================================================
 # 5. 权限分级测试

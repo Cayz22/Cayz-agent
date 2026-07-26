@@ -813,6 +813,33 @@ def python_repl(code: str) -> str:
         with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
             exec(code, _SAFE_GLOBALS, {})
 
+    # P0 安全加固：执行前 AST 静态分析，拒绝明显的死循环模式（DoS 防护）
+    # 检测模式：while <truthy constant> 且循环体内无 break 语句
+    # 这是跨平台兜底（Unix 有 SIGALRM 可中断，Windows 无信号机制需静态防护）
+    try:
+        tree = _ast.parse(code)
+        for node in _ast.walk(tree):
+            if isinstance(node, _ast.While):
+                # 判断条件是否为常量真值（True / 非零数字 / 非空字符串）
+                cond = node.test
+                is_truthy_const = False
+                if isinstance(cond, _ast.Constant):
+                    if isinstance(cond.value, (int, float, bool)):
+                        is_truthy_const = bool(cond.value)
+                    elif isinstance(cond.value, str):
+                        is_truthy_const = bool(cond.value)
+                if is_truthy_const:
+                    # 检查循环体内是否有 break（有 break 则允许）
+                    has_break = any(isinstance(child, _ast.Break) for child in _ast.walk(node))
+                    if not has_break:
+                        return (
+                            "错误: 检测到无限循环（while <truthy> 无 break），"
+                            "为防止资源耗尽已拒绝执行。请改用带退出条件的循环。"
+                        )
+    except SyntaxError:
+        # 语法错误交给后续 exec 抛出，不在此处拦截
+        pass
+
     # 信号超时（仅 Unix 有效，Windows 用线程兜底）
     try:
         if hasattr(signal, "SIGALRM"):
@@ -829,6 +856,8 @@ def python_repl(code: str) -> str:
                 signal.signal(signal.SIGALRM, old)
         else:
             # Windows：用 threading.Timer 兜底（无法强杀线程，仅作提示）
+            # P0 加固：结合上方的 AST 静态分析预检，可拦截绝大多数死循环 DoS 场景
+            # 残余风险（如递归无限调用）由 tools_python_repl_timeout 配置的 Timer 提示
             import threading
 
             timed_out = {"flag": False}

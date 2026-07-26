@@ -397,9 +397,11 @@ def get_agent_app_for_scope(scope: str):
 def _get_request_scope(request: Request) -> str:
     """从 request.state 读取 scope（由鉴权中间件写入）。
 
-    开发模式（无 Key）下中间件已写入 "admin"，故此处总有值。
+    P0 安全修复：默认值改为 "readonly"（fail-closed），避免中间件异常或新增端点
+    忘记挂 Depends(require_scope) 时默认获管理员权限（fail-open 缺陷）。
+    开发模式（无 Key）下鉴权中间件已显式写入 "admin"，故此处默认值仅在异常路径生效。
     """
-    return getattr(request.state, "scope", "admin")
+    return getattr(request.state, "scope", "readonly")
 
 
 def _get_request_client_id(request: Request) -> str:
