@@ -164,9 +164,9 @@ jobs:
         run: |
           TRIVY_VERSION=0.55.0
           curl -sfL -o /tmp/trivy.tar.gz \
-            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_linux_amd64.tar.gz"
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
           curl -sfL -o /tmp/trivy.sha256 \
-            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_linux_amd64.tar.gz.sha256"
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz.sha256"
           # 校验 SHA256（文件格式：<hash>  <filename>）
           cd /tmp && sha256sum -c trivy.sha256
           tar -xzf trivy.tar.gz -C /usr/local/bin trivy
