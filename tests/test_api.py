@@ -700,6 +700,82 @@ class TestP1ScopeEnforcement:
         # /chat 无 scope 限制，readonly 可访问
         assert resp.status_code != 403
 
+    def test_readonly_cannot_access_health_deep(self, client):
+        """P1 修复：readonly Key 访问 /health/deep 应返回 403（仅 admin）"""
+        with patch("cayz_agent.middleware.get_settings") as mock:
+            for k, v in self._SETTINGS.items():
+                setattr(mock.return_value, k, v)
+            resp = client.get("/health/deep", headers={"X-API-Key": "ro-key"})
+        assert resp.status_code == 403
+        assert "权限不足" in resp.json()["detail"]
+
+    def test_readonly_cannot_access_metrics(self, client):
+        """P1 修复：readonly Key 访问 /metrics 应返回 403（仅 admin）"""
+        with patch("cayz_agent.middleware.get_settings") as mock:
+            for k, v in self._SETTINGS.items():
+                setattr(mock.return_value, k, v)
+            resp = client.get("/metrics", headers={"X-API-Key": "ro-key"})
+        assert resp.status_code == 403
+
+    def test_readonly_cannot_delete_session(self, client):
+        """P1 修复：readonly Key 删除会话应返回 403（需 write 权限）"""
+        with patch("cayz_agent.middleware.get_settings") as mock:
+            for k, v in self._SETTINGS.items():
+                setattr(mock.return_value, k, v)
+            resp = client.delete(
+                "/sessions/some-thread-id",
+                headers={"X-API-Key": "ro-key"},
+            )
+        assert resp.status_code == 403
+
+    def test_write_can_delete_session(self, client):
+        """P1 修复：write Key 删除会话不应被 scope 拦截（非 403）"""
+        with patch("cayz_agent.middleware.get_settings") as mock:
+            for k, v in self._SETTINGS.items():
+                setattr(mock.return_value, k, v)
+            resp = client.delete(
+                "/sessions/some-thread-id",
+                headers={"X-API-Key": "write-key"},
+            )
+        # scope 校验通过（非 403）；实际删除由 SessionManager 处理
+        assert resp.status_code != 403
+
+    def test_sessions_limit_bounded(self, client):
+        """P1 DoS 防护：/sessions limit 超过 200 应返回 422（Pydantic 边界校验）"""
+        with patch("cayz_agent.middleware.get_settings") as mock:
+            for k, v in self._SETTINGS.items():
+                setattr(mock.return_value, k, v)
+            resp = client.get(
+                "/sessions?limit=10000000",
+                headers={"X-API-Key": "admin-key"},
+            )
+        assert resp.status_code == 422
+
+    def test_sessions_negative_limit_rejected(self, client):
+        """P1：/sessions limit 为负数应返回 422"""
+        with patch("cayz_agent.middleware.get_settings") as mock:
+            for k, v in self._SETTINGS.items():
+                setattr(mock.return_value, k, v)
+            resp = client.get(
+                "/sessions?limit=-1",
+                headers={"X-API-Key": "admin-key"},
+            )
+        assert resp.status_code == 422
+
+    def test_chat_message_max_length_enforced(self, client):
+        """P1 DoS 防护：/chat message 超过 MAX_INPUT_LENGTH 应返回 422（Pydantic 拦截）"""
+        from cayz_agent.validators import MAX_INPUT_LENGTH
+
+        with patch("cayz_agent.middleware.get_settings") as mock:
+            for k, v in self._SETTINGS.items():
+                setattr(mock.return_value, k, v)
+            resp = client.post(
+                "/chat",
+                json={"message": "x" * (MAX_INPUT_LENGTH + 1)},
+                headers={"X-API-Key": "admin-key"},
+            )
+        assert resp.status_code == 422
+
 
 class TestP2KnowledgeSensitiveScan:
     """P2 知识库敏感检测：测试上传文档时扫描敏感信息"""

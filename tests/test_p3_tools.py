@@ -10,6 +10,7 @@ P3 新增工具测试：calculate / fetch_url / read_file / write_file / python_
 """
 
 import os
+import socket
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -130,6 +131,28 @@ class TestFetchUrl:
         result = fetch_url.invoke({"url": long_url})
         assert "过长" in result
 
+    def test_ssrf_loopback_rejected(self):
+        """P0 SSRF 防护：回环地址应被拒绝"""
+        # mock DNS 解析返回 127.0.0.1
+        with patch("socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(socket.AF_INET, 0, 0, "", ("127.0.0.1", 0))]
+            result = fetch_url.invoke({"url": "http://localhost/admin"})
+        assert "SSRF" in result or "非公网" in result
+
+    def test_ssrf_private_address_rejected(self):
+        """P0 SSRF 防护：私有地址（10.x / 192.168.x / 172.16-31.x）应被拒绝"""
+        with patch("socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(socket.AF_INET, 0, 0, "", ("10.0.0.1", 0))]
+            result = fetch_url.invoke({"url": "http://internal.example.com/"})
+        assert "SSRF" in result or "非公网" in result
+
+    def test_ssrf_metadata_service_rejected(self):
+        """P0 SSRF 防护：云厂商元数据地址 169.254.169.254 应被拒绝（防止 IAM 凭证窃取）"""
+        with patch("socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(socket.AF_INET, 0, 0, "", ("169.254.169.254", 0))]
+            result = fetch_url.invoke({"url": "http://169.254.169.254/latest/meta-data/"})
+        assert "SSRF" in result or "非公网" in result
+
     def test_successful_fetch_extracts_text(self):
         """成功抓取应提取正文文本"""
         html = "<html><head><title>Test</title></head><body><p>Hello World</p></body></html>"
@@ -137,6 +160,8 @@ class TestFetchUrl:
         mock_resp.text = html
         mock_resp.headers = {"Content-Length": str(len(html))}
         mock_resp.raise_for_status = MagicMock()
+        # P0 SSRF 修复：fetch_url 现在手动跟随重定向，mock 必须显式声明非重定向
+        mock_resp.is_redirect = False
 
         mock_client = MagicMock()
         mock_client.__enter__ = MagicMock(return_value=mock_client)
@@ -159,6 +184,8 @@ class TestFetchUrl:
         mock_resp.raise_for_status = MagicMock(
             side_effect=httpx.HTTPStatusError("Not Found", request=MagicMock(), response=mock_resp)
         )
+        # P0 SSRF 修复：mock 必须显式声明非重定向
+        mock_resp.is_redirect = False
 
         mock_client = MagicMock()
         mock_client.__enter__ = MagicMock(return_value=mock_client)
@@ -176,6 +203,8 @@ class TestFetchUrl:
         mock_resp.text = "x" * 100
         mock_resp.headers = {"Content-Length": "999999999"}  # 声明超大
         mock_resp.raise_for_status = MagicMock()
+        # P0 SSRF 修复：mock 必须显式声明非重定向
+        mock_resp.is_redirect = False
 
         mock_client = MagicMock()
         mock_client.__enter__ = MagicMock(return_value=mock_client)
@@ -210,6 +239,34 @@ class TestFileTools:
             # 尝试 ../ 跳出 workspace
             result = read_file.invoke({"file_path": "../../../etc/passwd"})
             assert "越界" in result
+
+    def test_path_traversal_prefix_confusion_rejected(self, tmp_path):
+        """P0 安全加固：前缀混淆攻击应被拒绝
+
+        旧实现 str(target).startswith(str(workspace_root)) 在 workspace=/data/workspace
+        而 target=/data/workspace-evil/secret.txt 时返回 True，导致可读写任意文件。
+        新实现用 relative_to 替代，从根本上消除前缀混淆。
+        """
+        # 在 tmp_path 同级创建一个 "tmp_path-evil" 目录模拟前缀混淆场景
+        evil_dir = tmp_path.parent / (tmp_path.name + "-evil")
+        evil_dir.mkdir(exist_ok=True)
+        try:
+            evil_file = evil_dir / "secret.txt"
+            evil_file.write_text("stolen-content", encoding="utf-8")
+
+            with patch("cayz_agent.tools.get_settings") as mock:
+                mock.return_value.tools_workspace_dir = str(tmp_path)
+                # 构造 ../<tmp_name>-evil/secret.txt，解析后路径以 workspace_root 为前缀但不在其子树内
+                relative_evil = f"../{tmp_path.name}-evil/secret.txt"
+                result = read_file.invoke({"file_path": relative_evil})
+                assert "越界" in result
+                # 确认未读取到 evil 文件内容
+                assert "stolen-content" not in result
+        finally:
+            if evil_dir.exists():
+                import shutil
+
+                shutil.rmtree(evil_dir, ignore_errors=True)
 
     def test_write_and_read_roundtrip(self, tmp_path):
         """写入后读取应返回相同内容"""
@@ -369,6 +426,36 @@ class TestPythonRepl:
         """P0：while False 不应被拦截（条件为假不会死循环）"""
         result = python_repl.invoke({"code": "while False:\n    print('never')\nprint('done')"})
         assert "done" in result
+
+    def test_subclasses_bypass_rejected(self):
+        """P0 安全加固：__subclasses__ 沙箱逃逸应被拒绝（黑名单拦截）"""
+        # 经典 Python 沙箱逃逸 PoC：().__class__.__base__.__subclasses__()
+        code = "[x for x in ().__class__.__base__.__subclasses__() if x.__name__ == 'Popen'][0](['id'])"
+        result = python_repl.invoke({"code": code})
+        # 应被黑名单或 AST 拦截，不能实际执行命令
+        assert "禁止" in result or "错误" in result
+        # 确认未实际执行（无 uid 输出）
+        assert "uid=" not in result
+
+    def test_class_attribute_access_rejected(self):
+        """P0：AST 层禁止访问以下划线开头的属性（拦截 __class__ 链）"""
+        # 即使绕过黑名单（如用变量拼接），AST 检测 Attribute.attr.startswith("_") 仍拦截
+        result = python_repl.invoke({"code": "x = 1\ny = x.__class__"})
+        assert "禁止" in result or "错误" in result
+
+    def test_getattr_reflection_rejected(self):
+        """P0：反射函数 getattr 应被 AST 拦截（防止字符串拼接绕过黑名单）"""
+        # 用不含黑名单关键词的 getattr 调用，验证 AST 层 Call 节点拦截
+        # getattr(x, "__cla" + "ss__") 可绕过关键字黑名单，AST 层拦截 Call 节点
+        result = python_repl.invoke({"code": "getattr((), 'foo')"})
+        assert "禁止" in result or "错误" in result
+        assert "getattr" in result
+
+    def test_normal_attribute_access_allowed(self):
+        """P0：非下划线属性访问应正常工作（不误伤合法用法）"""
+        # math.sqrt / math.pi 等合法属性访问不应被 AST 拦截
+        result = python_repl.invoke({"code": "print(math.sqrt(16))"})
+        assert "4.0" in result
 
 
 # ============================================================

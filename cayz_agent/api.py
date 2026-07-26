@@ -26,7 +26,7 @@ import secrets
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
@@ -52,6 +52,7 @@ from .sanitizers import detect_sensitive_info, sanitize_exception, sanitize_text
 from .session import get_session_manager
 from .validators import (
     MAX_BATCH_ITEMS,
+    MAX_INPUT_LENGTH,
     MAX_KNOWLEDGE_TEXT_LENGTH,
     InputValidationError,
     validate_knowledge_text,
@@ -465,7 +466,8 @@ def _scan_knowledge_sensitive(text: str, source: str = ""):
 
 
 class ChatRequest(BaseModel):
-    message: str = Field(..., description="用户消息")
+    # P1 DoS 防护：在 Pydantic 解析阶段即拒绝超长 message，避免大请求体进入 LLM 校验前占用内存
+    message: str = Field(..., max_length=MAX_INPUT_LENGTH, description="用户消息")
     thread_id: str | None = Field(None, description="会话 ID，不传则自动生成")
 
 
@@ -564,8 +566,12 @@ async def health_ready():
 
 
 @app.get("/health/deep")
-async def health_deep():
-    """深度健康检查：包含依赖组件状态与监控指标摘要（需鉴权）"""
+async def health_deep(_: None = Depends(require_scope("admin"))):
+    """深度健康检查：包含依赖组件状态与监控指标摘要（需 admin 鉴权）
+
+    P1 修复：原端点未挂 require_scope，任何 readonly Key 都能读取 LLM provider、
+    SQLite 路径、API Key 配置状态等运维敏感信息。现收紧到 admin scope。
+    """
     deps = {
         "llm": _check_llm(),
         "chromadb": _check_chromadb(),
@@ -581,8 +587,12 @@ async def health_deep():
 
 
 @app.get("/metrics")
-async def metrics():
-    """Prometheus 指标导出（需鉴权，防止业务指标泄露）"""
+async def metrics(_: None = Depends(require_scope("admin"))):
+    """Prometheus 指标导出（需 admin 鉴权，防止业务指标泄露）
+
+    P1 修复：原端点未挂 require_scope，readonly Key 可读取完整业务流量画像、
+    错误率（可用于侧信道推测攻击是否成功）。现收紧到 admin scope。
+    """
     # 触发一次告警检查
     check_alerts()
     return PlainTextResponse(export_prometheus(), media_type="text/plain; version=0.0.4")
@@ -698,7 +708,15 @@ async def chat_stream(req: ChatRequest, request: Request):
             yield f"data: {json.dumps({'done': True, 'reply': safe, 'thread_id': tid}, ensure_ascii=False)}\n\n"
         except Exception as e:
             record_request(request_type="stream", success=False, latency=time.perf_counter() - start)
-            yield f"data: {json.dumps({'error': sanitize_exception(e), 'thread_id': tid}, ensure_ascii=False)}\n\n"
+            # P1 信息泄露修复：与 /chat 端点对齐，生产模式返回通用消息
+            # 旧实现无论 auth_required 都返回 sanitize_exception(e)，会泄露框架版本、
+            # 库内部异常类型、SQL 错误、API Key 失效状态等，便于攻击者指纹后端
+            err_msg = (
+                "Agent 执行出错，请稍后重试"
+                if settings.auth_required
+                else f"Agent 执行出错: {sanitize_exception(e)}"
+            )
+            yield f"data: {json.dumps({'error': err_msg, 'thread_id': tid}, ensure_ascii=False)}\n\n"
         finally:
             # 无论成功/失败都释放 active_sessions
             record_session_end()
@@ -711,7 +729,12 @@ async def chat_stream(req: ChatRequest, request: Request):
 
 
 @app.get("/sessions")
-async def list_sessions(limit: int = 100, offset: int = 0, request: Request = None):
+async def list_sessions(
+    # P1 DoS 防护：限制 limit/offset 边界，防止 limit=10000000 全表扫描拖垮 SQLite
+    limit: int = Query(100, ge=1, le=200, description="每页数量（1-200）"),
+    offset: int = Query(0, ge=0, description="偏移量"),
+    request: Request = None,
+):
     """列出会话（admin 查全部，其他用户仅查自己的）
 
     P1 分页修复：返回真实 total（符合条件的总会话数），而非当前页 len(sessions)。
@@ -742,8 +765,13 @@ async def get_session_detail(thread_id: str, request: Request = None):
 
 
 @app.delete("/sessions/{thread_id}")
-async def delete_session(thread_id: str, request: Request = None):
-    """删除指定会话（admin 可删任意，其他用户仅删自己的）"""
+async def delete_session(thread_id: str, request: Request = None, _: None = Depends(require_scope("write"))):
+    """删除指定会话（admin 可删任意，其他用户仅删自己的）
+
+    P1 修复：原端点未挂 require_scope，readonly Key 也能删除自己名下的会话，
+    与 config.py 中"readonly 仅可对话与查询，不可修改知识库/会话"的声明矛盾。
+    现收紧到 write scope。
+    """
     start = time.perf_counter()
     manager = get_session_manager()
     owner_filter = None if _get_request_scope(request) == "admin" else _get_request_client_id(request)
@@ -956,3 +984,9 @@ def run():
         timeout_keep_alive=settings.uvicorn_timeout_keep_alive,
         **({"limit_concurrency": settings.uvicorn_limit_concurrency} if settings.uvicorn_limit_concurrency > 0 else {}),
     )
+
+
+# P0 修复：Dockerfile CMD 为 `python -m cayz_agent.api`，必须提供 __main__ 入口
+# 否则模块导入完毕后解释器立即退出，uvicorn 从未启动，容器启动即退出（部署完全阻塞）
+if __name__ == "__main__":
+    run()

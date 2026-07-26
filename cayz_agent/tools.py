@@ -501,6 +501,48 @@ def calculate(expression: str) -> str:
 # ---- 11.2 fetch_url：网页内容抓取 ----
 
 
+def _check_ssrf(url: str) -> str | None:
+    """P0 SSRF 防护：校验 URL 目标 IP 是否为内网/回环/链路本地/保留地址。
+
+    Args:
+        url: 待校验的 URL
+
+    Returns:
+        错误消息字符串（拒绝访问）；None 表示通过校验
+    """
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    if not parsed.hostname:
+        return "错误：URL 缺少主机名"
+
+    try:
+        # 解析主机名为 IP 地址（可能返回多个 A/AAAA 记录）
+        addrinfos = socket.getaddrinfo(parsed.hostname, None)
+    except socket.gaierror:
+        # DNS 解析失败：交由后续 httpx 请求处理（会返回请求错误）
+        return None
+
+    for _, _, _, _, sockaddr in addrinfos:
+        ip = ipaddress.ip_address(sockaddr[0])
+        # 拒绝所有非公网地址：回环/私有/链路本地/保留/多播/未分配
+        if (
+            ip.is_loopback
+            or ip.is_private
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
+            return (
+                f"错误：禁止访问非公网地址 {ip}（SSRF 防护）。"
+                "fetch_url 仅允许访问公网 URL。"
+            )
+    return None
+
+
 @tool
 def fetch_url(url: str) -> str:
     """抓取指定 URL 的网页正文内容，自动去除 HTML 标签和导航栏等噪音。
@@ -522,19 +564,47 @@ def fetch_url(url: str) -> str:
     if len(url) > 2048:
         return "错误：URL 过长（>2048 字符）"
 
+    # P0 安全修复：SSRF 防护 - 拒绝内网/回环/链路本地/元数据地址
+    # 防止攻击者通过 prompt injection 让 agent 抓取：
+    #   - http://169.254.169.254/... (云厂商元数据服务，可窃取 IAM 临时凭证)
+    #   - http://127.0.0.1:8000/health/deep (内网管理面板)
+    #   - http://10.0.0.1/... / http://192.168.0.1/... (内网横向渗透)
+    err = _check_ssrf(url)
+    if err:
+        return err
+
     settings = get_settings()
     import httpx
 
     try:
         with httpx.Client(
             timeout=float(settings.tools_fetch_url_timeout),
-            follow_redirects=True,
-            max_redirects=5,
+            # P0 SSRF 防护：禁用自动重定向，防止外部服务器 302 跳转到内网地址绕过初始校验
+            # 由我们手动校验每一跳的目标
+            follow_redirects=False,
         ) as client:
-            resp = client.get(
-                url,
-                headers={"User-Agent": settings.tools_fetch_url_user_agent},
-            )
+            # P0 SSRF：手动跟随重定向，每一跳都校验目标 URL
+            current_url = url
+            for _redir in range(5):  # 最多 5 次重定向
+                resp = client.get(
+                    current_url,
+                    headers={"User-Agent": settings.tools_fetch_url_user_agent},
+                )
+                if resp.is_redirect:
+                    location = resp.headers.get("location", "")
+                    if not location:
+                        break
+                    # 拼接相对重定向 URL
+                    import urllib.parse as _up
+
+                    next_url = _up.urljoin(current_url, location)
+                    # 每跳都校验目标 IP，防止 302 跳到内网
+                    redir_err = _check_ssrf(next_url)
+                    if redir_err:
+                        return redir_err
+                    current_url = next_url
+                    continue
+                break
             resp.raise_for_status()
 
             # 检查 Content-Length，超过限制直接拒绝
@@ -613,8 +683,13 @@ def _validate_workspace_path(file_path: str, must_exist: bool = False):
     # 拼接并解析为绝对路径（resolve 会展开符号链接）
     target = (workspace_root / file_path).resolve()
 
-    # 关键安全检查：解析后的路径必须在 workspace 内
-    if not str(target).startswith(str(workspace_root)):
+    # P0 安全修复：用 relative_to 替代 str.startswith，消除前缀混淆漏洞
+    # 旧实现 `str(target).startswith(str(workspace_root))` 在 workspace=/data/workspace
+    # 而 target=/data/workspace-evil/secret.txt 时返回 True，导致路径穿越可读写任意文件
+    # relative_to 在 target 不在 workspace 子树内时抛 ValueError，天然安全
+    try:
+        target.relative_to(workspace_root)
+    except ValueError:
         raise ValueError(f"路径越界：{file_path} 不在 workspace 内")
 
     # 防止读取目录
@@ -728,6 +803,10 @@ def python_repl(code: str) -> str:
     max_output = settings.tools_python_repl_max_output
 
     # 危险关键字黑名单（pre-check，主防护靠沙箱内置 __builtins__）
+    # P0 安全加固：补齐 Python 沙箱逃逸常用的 dunder 属性，防止 __subclasses__ 绕过
+    # 旧黑名单遗漏 __class__ / __subclasses__ / __base__ / __mro__ / __globals__ 等，
+    # 攻击者可通过 ().__class__.__base__.__subclasses__() 枚举所有已加载类
+    # （含 subprocess.Popen、os._wrap_close 等）实现 RCE
     _DANGEROUS = (
         "import ",
         "import(",
@@ -744,6 +823,21 @@ def python_repl(code: str) -> str:
         "globals(",
         "locals(",
         "vars(",
+        # P0：沙箱逃逸常用 dunder 属性（覆盖 __subclasses__ 链 + __globals__ 链）
+        "__class__",
+        "__subclasses__",
+        "__base__",
+        "__bases__",
+        "__mro__",
+        "__globals__",
+        "__code__",
+        "__reduce__",
+        "__reduce_ex__",
+        "__getstate__",
+        "__setstate__",
+        "__dict__",
+        "__init_subclass__",
+        "__subclasshook__",
     )
     code_lower = code.lower()
     for kw in _DANGEROUS:
@@ -836,6 +930,20 @@ def python_repl(code: str) -> str:
                             "错误: 检测到无限循环（while <truthy> 无 break），"
                             "为防止资源耗尽已拒绝执行。请改用带退出条件的循环。"
                         )
+            # P0 安全加固：禁止访问以下划线开头的属性（拦截 __subclasses__ 链 + 反射绕过）
+            # 这是关键字黑名单的 AST 级补充：黑名单可被字符串拼接绕过
+            # （如 getattr(x, "__cla"+"ss__")），AST 检测覆盖所有 Attribute 节点
+            if isinstance(node, _ast.Attribute) and node.attr.startswith("_"):
+                return (
+                    "错误: 禁止访问以下划线开头的属性（防止沙箱逃逸）。"
+                    "如需数据处理请使用提供的 math/statistics/json 等模块。"
+                )
+            # P0：拦截反射函数调用（getattr/setattr/hasattr/delattr 可绕过 Attribute 检测）
+            if isinstance(node, _ast.Call) and isinstance(node.func, _ast.Name):
+                if node.func.id in ("getattr", "setattr", "hasattr", "delattr", "vars", "dir"):
+                    return (
+                        f"错误: 禁止使用反射函数 {node.func.id}（防止沙箱逃逸）。"
+                    )
     except SyntaxError:
         # 语法错误交给后续 exec 抛出，不在此处拦截
         pass

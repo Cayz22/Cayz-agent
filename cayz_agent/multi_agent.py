@@ -36,7 +36,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 
 from .cache import get_llm_cache
-from .graph import build_checkpointer, log_token_usage
+from .graph import build_checkpointer, log_token_usage, validate_input_node
 from .llm import create_llm
 from .monitor import record_route
 from .tools import AGENT_TOOLS
@@ -317,6 +317,9 @@ def _build_multi_agent_graph():
     workflow = StateGraph(MultiAgentState)
 
     # 添加节点
+    # P1 安全修复：复用 graph.py 的 validate_input_node 作为入口，与单 Agent 图保持一致
+    # 旧实现入口直接是 router，导致多 Agent 模式下所有长度/注入模式校验全部失效
+    workflow.add_node("validate_input", validate_input_node)
     workflow.add_node("router", router_node)
     workflow.add_node("knowledge_agent", knowledge_agent_node)
     workflow.add_node("search_agent", search_agent_node)
@@ -324,8 +327,28 @@ def _build_multi_agent_graph():
     workflow.add_node("business_agent", business_agent_node)
     workflow.add_node("tools", ToolNode(AGENT_TOOLS, handle_tool_errors=True))
 
-    # 入口
-    workflow.set_entry_point("router")
+    # 入口：先校验输入，再路由
+    workflow.set_entry_point("validate_input")
+
+    # validate_input → router 或 END（校验失败时 validate_input_node 已注入拒绝消息，直接结束）
+    def _route_after_validation(state: MultiAgentState) -> str:
+        """验证后路由：如果 validate_input 已注入拒绝消息则结束，否则进入 router"""
+        messages = state.get("messages", [])
+        last_message = messages[-1] if messages else None
+        # 如果最后一条是 AIMessage 且前一条是 HumanMessage，说明是验证拒绝
+        if (
+            isinstance(last_message, AIMessage)
+            and len(messages) >= 2
+            and isinstance(messages[-2], HumanMessage)
+        ):
+            return END
+        return "router"
+
+    workflow.add_conditional_edges(
+        "validate_input",
+        _route_after_validation,
+        {"router": "router", END: END},
+    )
 
     # 路由 Agent → 四个子 Agent
     workflow.add_conditional_edges(
