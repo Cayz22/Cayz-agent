@@ -1,4 +1,4 @@
-"""Streamlit Web UI 入口 - Galasky 深空主题"""
+"""Streamlit Web UI 入口 - GALASKY 深空主题"""
 import os
 import uuid
 
@@ -16,7 +16,7 @@ st.set_page_config(page_title="cayz-agent", page_icon="", layout="wide")
 _settings = get_settings()
 setup_logging(_settings.log_level, _settings.log_format)
 
-# 2. Galasky 深空主题 CSS
+# 2. GALASKY 深空主题 CSS
 GALASKY_CSS = """
 <style>
 /* ========== 全局背景 ========== */
@@ -689,7 +689,7 @@ with st.sidebar:
         st.caption(f"版本: {__version__}")
 
 # 4. 页面标题
-st.title("GALASKY")
+st.title("Cayz-agent")
 
 # 5. 渲染历史聊天记录
 for message in st.session_state.messages:
