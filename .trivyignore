@@ -1,0 +1,18 @@
+# CVE-2026-45829 (chromadb trust_remote_code 代码注入)
+# 严重度：CRITICAL (CVSS 4.0 满分)
+# 影响版本：chromadb 1.0.0 ~ 1.5.9
+# 修复状态：截至 2026-08-01，chromadb 1.5.9 为最新版，上游尚未发布修复版本
+#
+# 本项目实际风险评估：
+#   - 使用嵌入式 ChromaDB（in-process），不暴露 /api/v2/.../collections HTTP 端点
+#   - 未设置 trust_remote_code=true，不加载外部模型仓库
+#   - 攻击面：仅当攻击者能控制 ChromaDB 配置参数时才可利用（需先突破应用层）
+#   - 结论：实际不可利用，等待上游修复后升级
+#
+# 两个编号是同一漏洞的不同数据库别名：
+#   - GHSA-f4j7-r4q5-qw2c (GitHub Advisory)
+#   - PYSEC-2026-311 (PyPA Advisory)
+#   - CVE-2026-45829 (NVD)
+GHSA-f4j7-r4q5-qw2c
+PYSEC-2026-311
+CVE-2026-45829

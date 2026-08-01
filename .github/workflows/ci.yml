@@ -215,7 +215,7 @@ jobs:
           FIRST_TAG=$(echo "$TAGS" | head -n1 | tr -d ' ')
           echo "扫描镜像: $FIRST_TAG"
           docker pull "$FIRST_TAG"
-          trivy image --severity HIGH,CRITICAL --exit-code 1 --ignore-unfixed "$FIRST_TAG"
+          trivy image --severity HIGH,CRITICAL --exit-code 1 --ignore-unfixed --ignorefile .trivyignore "$FIRST_TAG"
         env:
           TRIVY_USERNAME: ${{ github.actor }}
           TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
