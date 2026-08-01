@@ -24,16 +24,18 @@ COPY pyproject.toml requirements.lock ./
 # 安全修复：requirements.lock 已固定 setuptools==83.0.0 和 msgpack==1.2.1（安全版本），
 #   但 venv 创建时自带 setuptools 70.3.0（CVE-2025-47273），msgpack 作为 CacheControl
 #   传递依赖可能被解析为旧版 1.1.2（GHSA-6v7p-g79w-8964）。
-#   --force-reinstall 确保覆盖 venv 自带的旧版 setuptools；msgpack 已加入 lock 显式固定。
 RUN python -m venv /build/venv \
     && /build/venv/bin/pip install --no-cache-dir --upgrade pip \
-    && /build/venv/bin/pip install --no-cache-dir -r requirements.lock \
-    && /build/venv/bin/pip install --no-cache-dir --force-reinstall "setuptools==83.0.0" "msgpack==1.2.1"
+    && /build/venv/bin/pip install --no-cache-dir -r requirements.lock
 
 # 复制项目代码并安装包
 COPY cayz_agent/ ./cayz_agent/
 COPY web_app.py ./
-RUN /build/venv/bin/pip install --no-cache-dir --no-deps -e .
+RUN /build/venv/bin/pip install --no-cache-dir --no-deps -e . \
+    # 强制卸载并重装漏洞版本，放在所有安装之后确保最终状态正确
+    # --force-reinstall 不清理旧 dist-info，Trivy 仍会扫到旧目录名
+    && /build/venv/bin/pip uninstall -y setuptools msgpack \
+    && /build/venv/bin/pip install --no-cache-dir --no-deps "setuptools==83.0.0" "msgpack==1.2.1"
 
 
 # ===== 阶段 2: 运行阶段（精简镜像，不含 gcc/构建工具）=====
