@@ -110,18 +110,37 @@ jobs:
             --ignore-vuln=PYSEC-2026-311 \
             --ignore-vuln=GHSA-f4j7-r4q5-qw2c
 
-      - name: Run Trivy filesystem scan (源码漏洞 + 配置错误)
-        # P1 供应链加固：固定 trivy-action 到具体版本 tag，避免 @master 可变引用
-        # 旧实现 @master 上游任何提交（含被入侵后的恶意提交）会立即在下次 CI 生效
-        # --ignorefile：trivy-action 在容器中运行，需显式指定 ignorefile 路径读取 .trivyignore
-        uses: aquasecurity/trivy-action@v0.24.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          severity: HIGH,CRITICAL
-          exit-code: '1'
-          ignore-unfixed: true
-          args: --ignorefile .trivyignore
+      - name: Install Trivy (pinned version)
+        # P1 供应链加固：固定版本 + 经 GitHub API 取真实资产 URL（不手拼命名，杜绝 404）。
+        # 直接安装 trivy 二进制而非用 trivy-action，确保 .trivyignore 被正确读取。
+        env:
+          TRIVY_VERSION: "0.69.3"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXPECTED_SHA256: "1816b632dfe529869c740c0913e36bd1629cb7688bd5634f4a858c1d57c88b75"
+        run: |
+          set -euo pipefail
+          API="https://api.github.com/repos/aquasecurity/trivy/releases/tags/v${TRIVY_VERSION}"
+          HDR=(-H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json")
+          if ! REL=$(curl --retry 3 --retry-delay 5 -fsSL "${HDR[@]}" "$API" 2>/tmp/api_err); then
+            echo "::error::获取 release v${TRIVY_VERSION} 失败"; cat /tmp/api_err || true; exit 1
+          fi
+          TAR_NAME=$(echo "$REL" | jq -r --arg v "$TRIVY_VERSION" \
+            '[.assets[].name | select(test("^trivy_\($v)_Linux-(64bit|AMD64|amd64)\\.tar\\.gz$"))] | .[0] // empty')
+          if [ -z "${TAR_NAME}" ]; then
+            echo "::error::v${TRIVY_VERSION} 无 Linux/amd64 tar.gz"; echo "$REL" | jq -r '.assets[].name'; exit 1
+          fi
+          TAR_URL=$(echo "$REL" | jq -r --arg n "$TAR_NAME" '.assets[] | select(.name==$n) | .browser_download_url')
+          curl --retry 3 --retry-delay 5 -fL "${HDR[@]}" -H "Accept: application/octet-stream" -o /tmp/trivy.tar.gz "$TAR_URL"
+          got=$(sha256sum /tmp/trivy.tar.gz | awk '{print $1}')
+          if [ -n "${EXPECTED_SHA256}" ] && [ "${got}" != "${EXPECTED_SHA256}" ]; then
+            echo "::error::SHA256 不匹配 期望=${EXPECTED_SHA256} 实际=${got}"; exit 1
+          fi
+          tar -xzf /tmp/trivy.tar.gz -C /usr/local/bin trivy
+          trivy --version
+
+      - name: Trivy filesystem scan (源码漏洞 + 配置错误)
+        # 读取 repo 根目录的 .trivyignore 忽略已知且无法修复的漏洞（如 chromadb CVE-2026-45829）
+        run: trivy fs --severity HIGH,CRITICAL --exit-code 1 --ignore-unfixed --ignorefile .trivyignore .
 
   docker:
     needs: [test, lint, security]
