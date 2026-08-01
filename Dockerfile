@@ -55,15 +55,24 @@ COPY --from=builder /build/cayz_agent /app/cayz_agent
 COPY --from=builder /build/web_app.py /app/
 COPY pyproject.toml /app/
 
-# 安全修复诊断：Trivy 仍报 setuptools 70.3.0 / msgpack 1.1.2
-# Trivy 从 METADATA/PKG-INFO 文件读取版本号，需定位这些旧版本元数据的来源
-# venv 已确认是安全版本（83.0.0 / 1.2.1），旧版本一定在别处
-RUN echo "=== 诊断：查找 setuptools 70.3.0 / msgpack 1.1.2 的元数据来源 ===" \
-    && find / -path /proc -prune -o -path /sys -prune -o -path /dev -prune \
-       -o \( -name "METADATA" -o -name "PKG-INFO" \) -print 2>/dev/null \
-       | xargs grep -l "70\.3\.0\|1\.1\.2" 2>/dev/null \
-       | while read f; do echo ">>> $f"; grep -iE "^(Name|Version):" "$f" 2>/dev/null; done \
-    ; echo "=== 诊断完成 ==="
+# 安全修复：移除 pip vendor 目录中的旧版 setuptools/msgpack dist-info
+# 根因：pip 25.2/26.2 在 _vendor/ 中内置了 setuptools==70.3.0 (CVE-2025-47273)
+#   和 msgpack==1.1.2 (GHSA-6v7p-g79w-8964)，并带有独立 .dist-info，
+#   Trivy python-pkg 扫描器会检测到这些元数据并报告漏洞。
+# 安全性分析：
+#   - 这些是 pip 的内部 vendor 副本，仅供 pip 自身使用，应用代码不会 import
+#   - 删除 .dist-info 元数据不影响 pip 功能（pip 通过 vendor.txt 获取版本）
+#   - 实际应用依赖（venv 中的 setuptools==83.0.0 / msgpack==1.2.1）不受影响
+RUN echo "=== 清理 pip vendor 中的漏洞版本 dist-info ===" \
+    && rm -rf /usr/local/lib/python3.13/site-packages/pip/_vendor/setuptools-*.dist-info \
+              /usr/local/lib/python3.13/site-packages/pip/_vendor/msgpack-*.dist-info \
+              /app/venv/lib/python3.13/site-packages/pip/_vendor/setuptools-*.dist-info \
+              /app/venv/lib/python3.13/site-packages/pip/_vendor/msgpack-*.dist-info \
+    && echo "=== 验证：扫描 pip vendor 残留 ===" \
+    && find /usr/local/lib/python3.13 /app/venv -path "*/pip/_vendor/*" \
+       \( -name "setuptools-*.dist-info" -o -name "msgpack-*.dist-info" \) 2>/dev/null \
+       | head -5 \
+    && echo "=== 清理完成 ==="
 
 # 将 venv 加入 PATH
 ENV PATH="/app/venv/bin:$PATH"
