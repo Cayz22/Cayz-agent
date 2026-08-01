@@ -55,6 +55,16 @@ COPY --from=builder /build/cayz_agent /app/cayz_agent
 COPY --from=builder /build/web_app.py /app/
 COPY pyproject.toml /app/
 
+# 安全修复：runtime 阶段最终保障
+# builder 阶段的构建隔离或传递依赖可能引入旧版 setuptools 70.3.0 / msgpack 1.1.2
+# 这里强制清理旧 dist-info 并重装安全版本，同时打印诊断信息到构建日志
+RUN /app/venv/bin/pip uninstall -y setuptools msgpack 2>&1 || true \
+    && rm -rf /app/venv/lib/python3.13/site-packages/setuptools-*.dist-info \
+    && rm -rf /app/venv/lib/python3.13/site-packages/msgpack-*.dist-info \
+    && /app/venv/bin/pip install --no-cache-dir --no-deps "setuptools==83.0.0" "msgpack==1.2.1" \
+    && echo "=== 诊断：最终安装版本 ===" \
+    && /app/venv/bin/pip show setuptools msgpack
+
 # 将 venv 加入 PATH
 ENV PATH="/app/venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
