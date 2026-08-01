@@ -16,3 +16,26 @@
 GHSA-f4j7-r4q5-qw2c
 PYSEC-2026-311
 CVE-2026-45829
+
+# ====================================================================
+# pip _vendor 内置副本漏洞（setuptools 70.3.0 / msgpack 1.1.2）
+# ====================================================================
+# 来源：pip 25.2/26.2 在 pip/_vendor/ 中 vendor 了旧版 setuptools 和 msgpack，
+#       并带有独立 .dist-info，Trivy python-pkg 扫描器会检测到。
+#       这是 pip 的上游 vendor 策略，本项目无法控制。
+#
+# 应用实际依赖已修复（见 Dockerfile + requirements.lock）：
+#   - venv 中 setuptools==83.0.0（远高于修复版 78.1.1）
+#   - venv 中 msgpack==1.2.1（修复版本）
+#
+# 不可利用性分析：
+#   - pip/_vendor/ 下的包仅供 pip 内部使用，应用代码不会 import
+#   - CVE-2025-47273 (setuptools PackageIndex 路径遍历)：需攻击者控制
+#     pip install 的包索引 URL，pip 自身使用场景下不可利用
+#   - GHSA-6v7p-g79w-8964 (msgpack Unpacker reuse)：需复用 Unpacker
+#     解析恶意数据，pip 内部 CacheControl 使用方式不触发该路径
+#   - 结论：vendor 副本不可利用，应用实际依赖已是安全版本
+#
+# 等待上游 pip 升级 vendor 版本后可移除本忽略规则。
+GHSA-6v7p-g79w-8964
+CVE-2025-47273
