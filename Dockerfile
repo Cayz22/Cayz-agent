@@ -55,14 +55,15 @@ COPY --from=builder /build/cayz_agent /app/cayz_agent
 COPY --from=builder /build/web_app.py /app/
 COPY pyproject.toml /app/
 
-# 安全修复验证：扫描镜像文件系统中的 setuptools/msgpack 残留
-# builder 阶段已强制安装安全版本（setuptools==83.0.0, msgpack==1.2.1）
-# 此处仅做诊断扫描，不执行 pip 操作（venv 的 pip 在 runtime 阶段可能不可用）
-# 系统 Python（python:3.13.7-slim）默认不含 setuptools/msgpack，无需清理
-RUN echo "=== 诊断：扫描 setuptools/msgpack 残留 ===" \
-    && find /usr/local/lib/python3.13 /app/venv \
-       \( -name "setuptools-*.dist-info" -o -name "msgpack-*.dist-info" \) 2>/dev/null \
-       | sort
+# 安全修复诊断：Trivy 仍报 setuptools 70.3.0 / msgpack 1.1.2
+# Trivy 从 METADATA/PKG-INFO 文件读取版本号，需定位这些旧版本元数据的来源
+# venv 已确认是安全版本（83.0.0 / 1.2.1），旧版本一定在别处
+RUN echo "=== 诊断：查找 setuptools 70.3.0 / msgpack 1.1.2 的元数据来源 ===" \
+    && find / -path /proc -prune -o -path /sys -prune -o -path /dev -prune \
+       -o \( -name "METADATA" -o -name "PKG-INFO" \) -print 2>/dev/null \
+       | xargs grep -l "70\.3\.0\|1\.1\.2" 2>/dev/null \
+       | while read f; do echo ">>> $f"; grep -iE "^(Name|Version):" "$f" 2>/dev/null; done \
+    ; echo "=== 诊断完成 ==="
 
 # 将 venv 加入 PATH
 ENV PATH="/app/venv/bin:$PATH"
