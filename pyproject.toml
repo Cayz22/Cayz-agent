@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "caya-agent"
+name = "cayz-agent"
 version = "1.0.0"
 description = "具备持久化记忆、联网搜索、知识库检索（RAG）与多模型支持的企业级 Agent"
 requires-python = ">=3.12"
@@ -46,8 +46,8 @@ ollama = [
 ]
 
 [project.scripts]
-caya-agent = "cayz_agent.__main__:main"
-caya-agent-api = "cayz_agent.api:run"
+cayz-agent = "cayz_agent.__main__:main"
+cayz-agent-api = "cayz_agent.api:run"
 
 [tool.setuptools.packages.find]
 include = ["cayz_agent*"]

@@ -89,7 +89,7 @@ cayz-agent 是一个 AI Agent 项目。项目展示了完整的 Agent 工程化�
 ```bash
 # 克隆项目
 git clone <repo-url>
-cd caya-agent
+cd cayz-agent
 
 # 创建虚拟环境
 python -m venv .venv
@@ -137,7 +137,7 @@ python -m cayz_agent
 streamlit run web_app.py
 
 # 方式三：REST API 服务
-caya-agent-api
+cayz-agent-api
 # 或
 python -m cayz_agent.api
 
@@ -256,7 +256,7 @@ EMAIL_FROM_ADDR=your@qq.com
 ## 项目结构
 
 ```
-caya-agent/
+cayz-agent/
 ├── cayz_agent/                 # 主包
 │   ├── __init__.py            # 包入口，导出公共 API
 │   ├── __main__.py            # CLI 入口
