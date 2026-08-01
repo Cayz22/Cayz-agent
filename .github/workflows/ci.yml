@@ -178,8 +178,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # 安全修复后首次构建禁用缓存，确保 setuptools/msgpack 升级生效
+          no-cache: true
 
       - name: Install Trivy (pinned version)
         # P1 供应链加固：固定版本 + 经 GitHub API 取真实资产 URL（不手拼命名，杜绝 404）。
