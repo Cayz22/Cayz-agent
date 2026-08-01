@@ -21,9 +21,13 @@ COPY pyproject.toml requirements.lock ./
 
 # 安装依赖到 /build/venv（不污染系统 Python）
 # P3：--no-cache-dir 不缓存 pip 包减小镜像体积；锁文件确保版本完全固定
+# 安全修复：显式升级 setuptools（pip 依赖，系统自带 70.3.0 有 CVE-2025-47273 路径穿越漏洞）
+#   和 msgpack（CacheControl 传递依赖，1.1.2 有 GHSA-6v7p-g79w-8964 OOB 读漏洞）到安全版本。
+#   这两个包不在 requirements.lock 中（lock 只锁直接依赖），Docker 构建时会被传递解析为旧版。
 RUN python -m venv /build/venv \
     && /build/venv/bin/pip install --no-cache-dir --upgrade pip \
-    && /build/venv/bin/pip install --no-cache-dir -r requirements.lock
+    && /build/venv/bin/pip install --no-cache-dir -r requirements.lock \
+    && /build/venv/bin/pip install --no-cache-dir --upgrade "setuptools>=83.0.0" "msgpack>=1.2.1"
 
 # 复制项目代码并安装包
 COPY cayz_agent/ ./cayz_agent/
