@@ -56,14 +56,38 @@ COPY --from=builder /build/web_app.py /app/
 COPY pyproject.toml /app/
 
 # 安全修复：runtime 阶段最终保障
-# builder 阶段的构建隔离或传递依赖可能引入旧版 setuptools 70.3.0 / msgpack 1.1.2
-# 这里强制清理旧 dist-info 并重装安全版本，同时打印诊断信息到构建日志
-RUN /app/venv/bin/pip uninstall -y setuptools msgpack 2>&1 || true \
-    && rm -rf /app/venv/lib/python3.13/site-packages/setuptools-*.dist-info \
-    && rm -rf /app/venv/lib/python3.13/site-packages/msgpack-*.dist-info \
+# Trivy 镜像扫描检查整个文件系统（系统 Python + venv 两套环境）
+# 根因：
+#   1. 基础镜像 python:3.13.7-slim 的系统 Python 自带 setuptools 70.3.0 (CVE-2025-47273)
+#   2. venv 中可能残留 msgpack 1.1.2 (GHSA-6v7p-g79w-8964) 的包文件
+# 修复策略：
+#   - 系统 Python：运行时仅需 /app/venv，系统 Python 的 setuptools/pkg_resources 可安全移除
+#   - venv：彻底清理旧版包文件（含包目录和 .dist-info 元数据）后重装安全版本
+RUN echo "=== 清理前：扫描残留 ===" \
+    && find /usr/local/lib/python3.13 /app/venv \
+       \( -name "setuptools*" -o -name "msgpack*" -o -name "pkg_resources*" \) 2>/dev/null || true \
+    && echo "=== 清理系统 Python ===" \
+    && pip uninstall -y setuptools msgpack 2>&1 || true \
+    && rm -rf /usr/local/lib/python3.13/site-packages/setuptools \
+              /usr/local/lib/python3.13/site-packages/setuptools-*.dist-info \
+              /usr/local/lib/python3.13/site-packages/pkg_resources \
+              /usr/local/lib/python3.13/site-packages/msgpack \
+              /usr/local/lib/python3.13/site-packages/msgpack-*.dist-info \
+    && echo "=== 清理 venv ===" \
+    && /app/venv/bin/pip uninstall -y setuptools msgpack 2>&1 || true \
+    && rm -rf /app/venv/lib/python3.13/site-packages/setuptools \
+              /app/venv/lib/python3.13/site-packages/setuptools-*.dist-info \
+              /app/venv/lib/python3.13/site-packages/pkg_resources \
+              /app/venv/lib/python3.13/site-packages/msgpack \
+              /app/venv/lib/python3.13/site-packages/msgpack-*.dist-info \
+    && echo "=== 重装安全版本到 venv ===" \
     && /app/venv/bin/pip install --no-cache-dir --no-deps "setuptools==83.0.0" "msgpack==1.2.1" \
-    && echo "=== 诊断：最终安装版本 ===" \
-    && /app/venv/bin/pip show setuptools msgpack
+    && echo "=== 诊断：清理后残留扫描（应只剩 83.0.0 / 1.2.1）===" \
+    && (find /usr/local/lib/python3.13 /app/venv \
+       \( -name "setuptools*" -o -name "msgpack*" \) 2>/dev/null \
+       | grep -vE "83\.0\.0|1\.2\.1" || echo "无残留") \
+    && echo "=== 诊断：venv 最终版本 ===" \
+    && /app/venv/bin/pip show setuptools msgpack | grep -E "^(Name|Version)"
 
 # 将 venv 加入 PATH
 ENV PATH="/app/venv/bin:$PATH"
