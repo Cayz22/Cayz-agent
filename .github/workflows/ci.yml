@@ -99,18 +99,21 @@ jobs:
       - name: Audit Python dependencies (CVE 扫描)
         # 基于 requirements.lock 扫描，确保审计的是实际部署的精确版本
         # 不使用 --strict，只报告直接依赖的已知漏洞，避免子依赖 CVE 误报
-        # --ignore-vuln=PYSEC-2026-311：chromadb 1.5.9 的 trust_remote_code 漏洞，
+        # --ignore-vuln：chromadb 1.5.9 的 CVE-2026-45829 (trust_remote_code 代码注入)，
         #   当前已是最新版（1.5.9），上游尚未发布修复版本。
-        #   本项目不直接调用 trust_remote_code=true，风险可控。
+        #   本项目使用嵌入式 ChromaDB，不暴露 HTTP 端点，不设 trust_remote_code=true，实际不可利用。
+        #   两个编号是同一漏洞的不同数据库别名，需分别 ignore。
         run: |
           pip-audit \
             --requirement requirements.lock \
             --desc on \
-            --ignore-vuln=PYSEC-2026-311
+            --ignore-vuln=PYSEC-2026-311 \
+            --ignore-vuln=GHSA-f4j7-r4q5-qw2c
 
       - name: Run Trivy filesystem scan (源码漏洞 + 配置错误)
         # P1 供应链加固：固定 trivy-action 到具体版本 tag，避免 @master 可变引用
         # 旧实现 @master 上游任何提交（含被入侵后的恶意提交）会立即在下次 CI 生效
+        # --ignorefile：trivy-action 在容器中运行，需显式指定 ignorefile 路径读取 .trivyignore
         uses: aquasecurity/trivy-action@v0.24.0
         with:
           scan-type: fs
@@ -118,6 +121,7 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: '1'
           ignore-unfixed: true
+          args: --ignorefile .trivyignore
 
   docker:
     needs: [test, lint, security]
