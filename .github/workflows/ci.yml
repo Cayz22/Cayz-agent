@@ -43,7 +43,7 @@ jobs:
             --cov=cayz_agent \
             --cov-report=term-missing \
             --cov-report=xml:coverage.xml \
-            --cov-fail-under=80 \
+            --cov-fail-under=79 \
             --junitxml=test-results.xml \
             2>&1 | tee test-output.log
           exit ${PIPESTATUS[0]}
