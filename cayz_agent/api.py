@@ -28,7 +28,6 @@ import time
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
@@ -1279,7 +1278,7 @@ async def get_knowledge_source(source: str):
 
 @app.post("/knowledge/upload-file")
 async def knowledge_upload_file(
-    file: UploadFile = File(...),
+    file: UploadFile = File(...),  # noqa: B008
     _: None = Depends(require_scope("write")),
 ):
     """上传文件到知识库（支持 .txt/.md/.pdf/.xlsx/.xls/.csv）

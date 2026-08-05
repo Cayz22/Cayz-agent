@@ -35,7 +35,7 @@ def temp_db():
             metadata BLOB,
             PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id)
         );
-        CREATE TABLE checkpoint_blobs (
+        CREATE TABLE writes (
             thread_id TEXT NOT NULL,
             checkpoint_ns TEXT NOT NULL DEFAULT '',
             channel TEXT NOT NULL,
@@ -80,7 +80,7 @@ def _insert_checkpoint(db_path: str, thread_id: str, checkpoint_id: str = "cp-1"
     )
     # channel 和 version 使用 checkpoint_id 以避免唯一约束冲突
     conn.execute(
-        "INSERT INTO checkpoint_blobs (thread_id, channel, version, type, blob) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO writes (thread_id, channel, version, type, blob) VALUES (?, ?, ?, ?, ?)",
         (thread_id, f"channel_{checkpoint_id}", f"v_{checkpoint_id}", "type", b"blob"),
     )
     conn.commit()
@@ -324,7 +324,7 @@ class TestDeleteSession:
 
         # 验证 blob 表也清理了
         conn = sqlite3.connect(temp_db)
-        cursor = conn.execute("SELECT COUNT(*) FROM checkpoint_blobs WHERE thread_id = ?", ("thread-1",))
+        cursor = conn.execute("SELECT COUNT(*) FROM writes WHERE thread_id = ?", ("thread-1",))
         count = cursor.fetchone()[0]
         conn.close()
         assert count == 0

@@ -476,11 +476,13 @@ class RAGManager:
             docs = results.get("documents", []) or []
             metas = results.get("metadatas", []) or []
             for i, doc_id in enumerate(ids):
-                items.append({
-                    "id": doc_id,
-                    "content": docs[i] if i < len(docs) else "",
-                    "metadata": metas[i] if i < len(metas) else {},
-                })
+                items.append(
+                    {
+                        "id": doc_id,
+                        "content": docs[i] if i < len(docs) else "",
+                        "metadata": metas[i] if i < len(metas) else {},
+                    }
+                )
             return items
         except Exception:
             logger.exception("按 source 获取文档失败")

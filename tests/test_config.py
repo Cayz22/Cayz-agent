@@ -3,6 +3,7 @@ config 模块单元测试：验证配置加载、单例模式和日志初始化
 """
 
 import logging
+from pathlib import Path
 
 import pytest
 
@@ -79,8 +80,18 @@ class TestSettingsDefaults:
         os.environ["OPENAI_API_KEY"] = "dummy-key-for-test"
         try:
             reset_settings_cache()
-            s = get_settings()
-            assert s.auth_required is True
+            # 临时重命名 .env 文件，避免 pydantic-settings 从中读取 AUTH_REQUIRED=false
+            env_path = Path(".env")
+            env_backup = Path(".env.bak_test")
+            env_exists = env_path.exists()
+            if env_exists:
+                env_path.rename(env_backup)
+            try:
+                s = get_settings()
+                assert s.auth_required is True
+            finally:
+                if env_exists:
+                    env_backup.rename(env_path)
         finally:
             if saved is not None:
                 os.environ["AUTH_REQUIRED"] = saved
