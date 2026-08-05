@@ -20,9 +20,39 @@ from .validators import InputValidationError, validate_user_input
 logger = logging.getLogger(__name__)
 
 
-def build_checkpointer():
-    """根据配置创建 checkpointer：memory 或 sqlite。
+async def init_checkpointer():
+    """异步初始化 checkpointer，在 FastAPI lifespan 启动阶段调用。
 
+    AsyncSqliteSaver.from_conn_string() 是异步上下文管理器，不能在 sync 函数中直接调用。
+    此函数在 lifespan（async 上下文）中调用，创建 checkpointer 实例并缓存到全局变量。
+    后续 build_checkpointer() 直接返回缓存的实例。
+    """
+    global _shared_checkpointer
+    if _shared_checkpointer is not None:
+        return
+
+    settings = get_settings()
+    backend = settings.checkpoint_backend.lower()
+    if backend == "sqlite":
+        try:
+            import aiosqlite
+            from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
+            logger.info("使用 SQLite 持久化（AsyncSqliteSaver）: %s", settings.sqlite_checkpoint_path)
+            conn = await aiosqlite.connect(settings.sqlite_checkpoint_path)
+            _shared_checkpointer = AsyncSqliteSaver(conn)
+            return
+        except ImportError:
+            logger.warning("langgraph-checkpoint-sqlite 未安装，回退到 MemorySaver")
+
+    logger.info("使用 MemorySaver（非持久化）")
+    _shared_checkpointer = MemorySaver()
+
+
+def build_checkpointer():
+    """返回已初始化的 checkpointer 实例。
+
+    必须在 init_checkpointer() 之后调用（lifespan 启动阶段已完成初始化）。
     被 graph.py 与 multi_agent.py 共用，保证多 Agent 模式也走相同的持久化策略。
     P0 性能：SQLite 启用 WAL 模式，避免并发写时「database is locked」。
     P2-7 修复：跨 scope 共享同一 checkpointer 实例，避免每个 scope 创建独立
@@ -30,44 +60,16 @@ def build_checkpointer():
     不影响持久化层。
     """
     global _shared_checkpointer
-    if _shared_checkpointer is not None:
-        return _shared_checkpointer
-    with _checkpointer_lock:
-        if _shared_checkpointer is not None:
-            return _shared_checkpointer
-        _shared_checkpointer = _do_build_checkpointer()
-        return _shared_checkpointer
+    if _shared_checkpointer is None:
+        # 兜底：如果 lifespan 未调用 init_checkpointer（如测试环境），
+        # 回退到 MemorySaver
+        logger.warning("checkpointer 未初始化，回退到 MemorySaver")
+        _shared_checkpointer = MemorySaver()
+    return _shared_checkpointer
 
 
-def _do_build_checkpointer():
-    """实际创建 checkpointer 实例（仅由 build_checkpointer 在锁内调用）"""
-    settings = get_settings()
-    backend = settings.checkpoint_backend.lower()
-    if backend == "sqlite":
-        try:
-            import sqlite3
-
-            from langgraph.checkpoint.sqlite import SqliteSaver
-
-            conn = sqlite3.connect(settings.sqlite_checkpoint_path, check_same_thread=False, timeout=5.0)
-            # P0 性能：启用 WAL，与 SessionManager._get_conn 保持一致
-            try:
-                conn.execute("PRAGMA journal_mode=WAL")
-                conn.execute("PRAGMA synchronous=NORMAL")
-                conn.execute("PRAGMA busy_timeout=5000")
-            except sqlite3.Error as e:
-                logger.warning("设置 checkpointer SQLite PRAGMA 失败: %s", e)
-            logger.info("使用 SQLite 持久化: %s", settings.sqlite_checkpoint_path)
-            return SqliteSaver(conn)
-        except ImportError:
-            logger.warning("langgraph-checkpoint-sqlite 未安装，回退到 MemorySaver")
-    logger.info("使用 MemorySaver（非持久化）")
-    return MemorySaver()
-
-
-# P2-7：checkpointer 单例锁与缓存
+# P2-7：checkpointer 单例缓存
 _shared_checkpointer = None
-_checkpointer_lock = __import__("threading").Lock()
 
 # 消息历史最大保留条数（防止上下文溢出与 Token 超限）
 MAX_MESSAGES = 20
@@ -332,7 +334,7 @@ def validate_input_node(state: AgentState):
 
 # 4. 构建 LangGraph 图
 # P0 工具权限分级：图按 scope 动态构建，每个 scope 一个独立的编译图实例
-# 模块级保留 default 图（admin scope）用于向后兼容（如 web_app.py 直接 import）
+# 模块级保留 default 图（admin scope）用于向后兼容
 _default_workflow = None
 
 

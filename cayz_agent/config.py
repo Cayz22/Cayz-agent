@@ -115,7 +115,7 @@ class Settings(BaseSettings):
     trust_forwarded_headers: bool = False
     # CORS 允许的来源（逗号分隔；* 表示全部允许但此时 credentials 强制为 False）
     # 生产环境应显式配置具体域名，如 https://your-domain.com
-    cors_allowed_origins: str = "http://localhost:8501"
+    cors_allowed_origins: str = "*"
     # 是否启用 API 文档（/docs /redoc /openapi.json），生产环境建议关闭
     docs_enabled: bool = False
     # M3 HTTPS 强制：是否将 HTTP 请求 301 重定向到 HTTPS

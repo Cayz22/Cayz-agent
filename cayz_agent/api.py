@@ -22,11 +22,13 @@ FastAPI REST API 服务
 import asyncio
 import json
 import logging
+import os
 import secrets
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi.responses import FileResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
@@ -37,7 +39,7 @@ from . import __version__, app_state
 from .alerts import check_alerts, start_alert_watcher, stop_alert_watcher
 from .config import get_settings, setup_logging
 from .exceptions import SessionBackendError
-from .graph import create_graph
+from .graph import create_graph, init_checkpointer
 from .middleware import _SCOPE_LEVEL, setup_middleware
 from .monitor import (
     export_prometheus,
@@ -219,6 +221,9 @@ async def lifespan(app: FastAPI):
     意外拉起后台线程干扰测试隔离。
     """
     # ---- startup ----
+    # P0: 异步初始化 checkpointer（AsyncSqliteSaver 需要 await 创建连接）
+    await init_checkpointer()
+
     if settings.alert_watcher_enabled:
         start_alert_watcher(interval=float(settings.alert_watcher_interval))
 
@@ -775,6 +780,168 @@ async def chat_stream(req: ChatRequest, request: Request):
     return StreamingResponse(_stream(), media_type="text/event-stream")
 
 
+# ---- 多 Agent 协作端点 ----
+# P2 新增：暴露多 Agent 路由模式的对话接口，与单 Agent /chat 并列
+
+
+class ChatMultiRequest(BaseModel):
+    message: str = Field(..., max_length=MAX_INPUT_LENGTH, description="用户消息")
+    thread_id: str | None = Field(None, description="会话 ID，不传则自动生成")
+
+
+class ChatMultiResponse(BaseModel):
+    reply: str = Field(..., description="Agent 回复")
+    thread_id: str = Field(..., description="会话 ID")
+    route: str = Field("chat", description="路由 Agent 判定意图")
+
+
+@app.post("/chat/multi", response_model=ChatMultiResponse)
+async def chat_multi(req: ChatMultiRequest, request: Request):
+    """多 Agent 协作对话：路由 Agent 自动分流到知识库/搜索/通用/业务 Agent"""
+    start = time.perf_counter()
+    try:
+        clean_message = validate_user_input(req.message)
+    except InputValidationError as e:
+        record_request(request_type="chat_multi", success=False, latency=time.perf_counter() - start)
+        raise HTTPException(status_code=422, detail=f"输入无效: {e}")
+
+    try:
+        tid = validate_thread_id(req.thread_id) if req.thread_id else f"multi-{secrets.token_urlsafe(32)}"
+    except InputValidationError as e:
+        raise HTTPException(status_code=422, detail=f"输入无效: {e}")
+
+    manager = get_session_manager()
+    client_id = _get_request_client_id(request)
+    scope = _get_request_scope(request)
+    if scope != "admin":
+        try:
+            real_owner = manager.touch_and_get_owner(tid, owner=client_id)
+        except SessionBackendError as e:
+            logger.error("多Agent IDOR 校验后端不可用: %s", e)
+            record_request(request_type="chat_multi", success=False, latency=time.perf_counter() - start)
+            raise HTTPException(status_code=503, detail="会话服务暂时不可用，请稍后重试")
+        if real_owner is None:
+            try:
+                exists = manager.session_exists(tid)
+            except SessionBackendError as e:
+                logger.error("多Agent session_exists 后端不可用: %s", e)
+                record_request(request_type="chat_multi", success=False, latency=time.perf_counter() - start)
+                raise HTTPException(status_code=503, detail="会话服务暂时不可用，请稍后重试")
+            if exists:
+                raise HTTPException(status_code=403, detail="无权访问该会话")
+        elif real_owner != client_id:
+            raise HTTPException(status_code=403, detail="无权访问该会话")
+    else:
+        manager.touch_session(tid, owner=client_id)
+
+    config = {"configurable": {"thread_id": tid}}
+
+    record_session_start()
+    try:
+        from .multi_agent import create_multi_agent_graph
+
+        graph = create_multi_agent_graph()
+        result = await asyncio.to_thread(
+            graph.invoke,
+            {"messages": [HumanMessage(content=clean_message)]},
+            config,
+        )
+        messages = result.get("messages", [])
+        ai_message = messages[-1].content if messages else ""
+        route = result.get("route", "chat")
+        safe_reply = sanitize_text(ai_message)
+        record_request(request_type="chat_multi", success=True, latency=time.perf_counter() - start)
+        return ChatMultiResponse(reply=safe_reply, thread_id=tid, route=route)
+    except Exception as e:
+        record_request(request_type="chat_multi", success=False, latency=time.perf_counter() - start)
+        logger.exception("多Agent 执行失败 (thread_id=%s): %s", tid, e)
+        if settings.auth_required:
+            raise HTTPException(status_code=500, detail="Agent 执行出错，请稍后重试")
+        raise HTTPException(status_code=500, detail=f"Agent 执行出错: {sanitize_exception(e)}")
+    finally:
+        record_session_end()
+
+
+@app.post("/chat/multi/stream")
+async def chat_multi_stream(req: ChatMultiRequest, request: Request):
+    """多 Agent 协作流式对话：SSE 逐 token 返回"""
+    start = time.perf_counter()
+    try:
+        clean_message = validate_user_input(req.message)
+    except InputValidationError as e:
+        record_request(request_type="chat_multi_stream", success=False, latency=time.perf_counter() - start)
+        raise HTTPException(status_code=422, detail=f"输入无效: {e}")
+
+    try:
+        tid = validate_thread_id(req.thread_id) if req.thread_id else f"multi-{secrets.token_urlsafe(32)}"
+    except InputValidationError as e:
+        raise HTTPException(status_code=422, detail=f"输入无效: {e}")
+
+    manager = get_session_manager()
+    client_id = _get_request_client_id(request)
+    scope = _get_request_scope(request)
+    if scope != "admin":
+        try:
+            real_owner = manager.touch_and_get_owner(tid, owner=client_id)
+        except SessionBackendError as e:
+            logger.error("多Agent流式 IDOR 校验后端不可用: %s", e)
+            record_request(request_type="chat_multi_stream", success=False, latency=time.perf_counter() - start)
+            raise HTTPException(status_code=503, detail="会话服务暂时不可用，请稍后重试")
+        if real_owner is None:
+            try:
+                exists = manager.session_exists(tid)
+            except SessionBackendError as e:
+                logger.error("多Agent流式 session_exists 后端不可用: %s", e)
+                record_request(request_type="chat_multi_stream", success=False, latency=time.perf_counter() - start)
+                raise HTTPException(status_code=503, detail="会话服务暂时不可用，请稍后重试")
+            if exists:
+                raise HTTPException(status_code=403, detail="无权访问该会话")
+        elif real_owner != client_id:
+            raise HTTPException(status_code=403, detail="无权访问该会话")
+    else:
+        manager.touch_session(tid, owner=client_id)
+
+    config = {"configurable": {"thread_id": tid}}
+
+    async def _multi_stream():
+        record_session_start()
+        try:
+            from .multi_agent import create_multi_agent_graph
+
+            graph = create_multi_agent_graph()
+            raw = ""
+            route = "chat"
+            async for event in graph.astream(
+                {"messages": [HumanMessage(content=clean_message)]},
+                config=config,
+                stream_mode="updates",
+            ):
+                for node_name, node_output in event.items():
+                    if node_name == "router":
+                        route = node_output.get("route", "chat")
+                        yield f"data: {json.dumps({'route': route, 'thread_id': tid}, ensure_ascii=False)}\n\n"
+                    if "messages" in node_output:
+                        for msg in node_output["messages"]:
+                            if isinstance(msg, AIMessageChunk) and msg.content:
+                                raw += msg.content
+                                safe_chunk = sanitize_text(msg.content)
+                                yield f"data: {json.dumps({'token': safe_chunk, 'thread_id': tid}, ensure_ascii=False)}\n\n"
+            safe = sanitize_text(raw)
+            record_request(request_type="chat_multi_stream", success=True, latency=time.perf_counter() - start)
+            yield f"data: {json.dumps({'done': True, 'reply': safe, 'thread_id': tid, 'route': route}, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            record_request(request_type="chat_multi_stream", success=False, latency=time.perf_counter() - start)
+            logger.exception("多Agent 流式执行失败 (thread_id=%s): %s", tid, e)
+            err_msg = (
+                "Agent 执行出错，请稍后重试" if settings.auth_required else f"Agent 执行出错: {sanitize_exception(e)}"
+            )
+            yield f"data: {json.dumps({'error': err_msg, 'thread_id': tid}, ensure_ascii=False)}\n\n"
+        finally:
+            record_session_end()
+
+    return StreamingResponse(_multi_stream(), media_type="text/event-stream")
+
+
 # ---- 会话管理端点 ----
 # P1 IDOR 修复：非管理员仅能访问/删除自己的会话（按 client_id 归属过滤）
 
@@ -823,6 +990,27 @@ async def get_session_detail(thread_id: str, request: Request = None):
     if info is None:
         return {"exists": False, "thread_id": thread_id}
     return info
+
+
+@app.get("/sessions/{thread_id}/messages")
+async def get_session_messages(thread_id: str, request: Request = None):
+    """获取指定会话的消息历史（admin 可查任意，其他用户仅查自己的）
+
+    返回格式: {"messages": [{"role": "user"|"assistant", "content": "..."}, ...]}
+    """
+    start = time.perf_counter()
+    manager = get_session_manager()
+    owner_filter = None if _get_request_scope(request) == "admin" else _get_request_client_id(request)
+    try:
+        messages = manager.get_session_messages(thread_id, owner_filter=owner_filter)
+    except SessionBackendError as e:
+        logger.error("查询会话消息后端不可用: %s", e)
+        record_request(request_type="sessions_messages", success=False, latency=time.perf_counter() - start)
+        raise HTTPException(status_code=503, detail="会话服务暂时不可用，请稍后重试")
+    record_request(request_type="sessions_messages", success=True, latency=time.perf_counter() - start)
+    if messages is None:
+        return {"thread_id": thread_id, "messages": [], "exists": False}
+    return {"thread_id": thread_id, "messages": messages, "exists": True}
 
 
 @app.delete("/sessions/{thread_id}")
@@ -1038,6 +1226,207 @@ async def knowledge_delete(source: str, _: None = Depends(require_scope("admin")
         record_knowledge_delete(deleted)
     record_request(request_type="knowledge_delete", success=True, latency=time.perf_counter() - start)
     return {"deleted": deleted, "source": source}
+
+
+# ---- 知识库检索端点 ----
+# P2 新增：直接搜索知识库的 API 端点
+
+
+@app.get("/knowledge/search")
+async def knowledge_search(
+    q: str = Query(..., min_length=1, max_length=1000, description="搜索查询"),
+    top_k: int = Query(5, ge=1, le=20, description="返回结果数量"),
+):
+    """搜索知识库（公开检索端点，无需 write 权限）"""
+    start = time.perf_counter()
+    from .rag import get_rag_manager
+
+    manager = get_rag_manager()
+    try:
+        results = manager.search_with_scores(q, top_k=top_k)
+    except Exception as e:
+        record_request(request_type="knowledge_search", success=False, latency=time.perf_counter() - start)
+        raise HTTPException(status_code=500, detail=f"知识库检索失败: {sanitize_exception(e)}")
+
+    items = []
+    for doc, score in results:
+        items.append(
+            {
+                "content": doc.page_content,
+                "source": doc.metadata.get("source", "unknown"),
+                "score": round(float(score), 4),
+            }
+        )
+    record_request(request_type="knowledge_search", success=True, latency=time.perf_counter() - start)
+    return {"query": q, "results": items, "count": len(items)}
+
+
+@app.get("/knowledge/{source:path}")
+async def get_knowledge_source(source: str):
+    """获取指定来源的所有文档片段"""
+    start = time.perf_counter()
+    from .rag import get_rag_manager
+
+    manager = get_rag_manager()
+    chunks = manager.get_by_source(source)
+    record_request(request_type="knowledge_get_source", success=True, latency=time.perf_counter() - start)
+    return {"source": source, "chunks": chunks, "count": len(chunks)}
+
+
+# ---- 知识库文件上传端点 ----
+# P2 新增：支持 PDF/Excel/CSV 文件上传
+
+
+@app.post("/knowledge/upload-file")
+async def knowledge_upload_file(
+    file: UploadFile = File(...),
+    _: None = Depends(require_scope("write")),
+):
+    """上传文件到知识库（支持 .txt/.md/.pdf/.xlsx/.xls/.csv）
+
+    需 write 及以上权限。文件大小限制 10MB。
+    """
+    start = time.perf_counter()
+    from .rag import get_rag_manager
+
+    # 校验文件扩展名
+    filename = file.filename or "unknown"
+    ext = os.path.splitext(filename)[1].lower()
+    allowed = {".txt", ".md", ".pdf", ".xlsx", ".xls", ".csv"}
+    if ext not in allowed:
+        record_request(request_type="knowledge_upload_file", success=False, latency=time.perf_counter() - start)
+        raise HTTPException(
+            status_code=422,
+            detail=f"不支持的文件类型: {ext}（支持: {', '.join(sorted(allowed))}）",
+        )
+
+    # 读取文件内容
+    try:
+        content_bytes = await file.read()
+    except Exception as e:
+        record_request(request_type="knowledge_upload_file", success=False, latency=time.perf_counter() - start)
+        raise HTTPException(status_code=500, detail=f"读取文件失败: {e}")
+
+    # 限制文件大小
+    max_size = 10 * 1024 * 1024  # 10MB
+    if len(content_bytes) > max_size:
+        record_request(request_type="knowledge_upload_file", success=False, latency=time.perf_counter() - start)
+        raise HTTPException(status_code=422, detail=f"文件过大（{len(content_bytes)} 字节，> {max_size}）")
+
+    # 解析文件内容
+    text = ""
+    try:
+        if ext in (".txt", ".md"):
+            for encoding in ("utf-8", "gbk", "latin-1"):
+                try:
+                    text = content_bytes.decode(encoding)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            if not text:
+                raise HTTPException(status_code=422, detail="无法解码文件内容")
+        elif ext == ".pdf":
+            import io
+
+            from pypdf import PdfReader
+
+            reader = PdfReader(io.BytesIO(content_bytes))
+            pages = []
+            for page in reader.pages:
+                try:
+                    page_text = page.extract_text()
+                    if page_text:
+                        pages.append(page_text)
+                except Exception:
+                    continue
+            text = "\n\n".join(pages)
+            if not text.strip():
+                raise HTTPException(status_code=422, detail="PDF 未提取到文本（可能是扫描件）")
+        elif ext in (".xlsx", ".xls"):
+            import io
+
+            from openpyxl import load_workbook
+
+            wb = load_workbook(io.BytesIO(content_bytes), read_only=True, data_only=True)
+            all_texts = []
+            try:
+                for sheet_name in wb.sheetnames:
+                    ws = wb[sheet_name]
+                    rows = list(ws.iter_rows(values_only=True))
+                    if rows:
+                        lines = [f"## 工作表: {sheet_name}"]
+                        for row in rows:
+                            cells = [str(c) if c is not None else "" for c in row]
+                            lines.append(" | ".join(cells))
+                        all_texts.append("\n".join(lines))
+            finally:
+                wb.close()
+            text = "\n\n".join(all_texts)
+            if not text.strip():
+                raise HTTPException(status_code=422, detail="Excel 文件为空")
+        elif ext == ".csv":
+            import csv as _csv
+            import io
+
+            for encoding in ("utf-8-sig", "utf-8", "gbk", "latin-1"):
+                try:
+                    decoded = content_bytes.decode(encoding)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            reader = _csv.reader(io.StringIO(decoded))
+            rows = list(reader)
+            rows = [r for r in rows if any(c.strip() for c in r)]
+            if rows:
+                lines = []
+                for row in rows:
+                    lines.append(" | ".join(c.strip() for c in row))
+                text = "\n".join(lines)
+            if not text.strip():
+                raise HTTPException(status_code=422, detail="CSV 文件为空")
+    except HTTPException:
+        raise
+    except ImportError as e:
+        record_request(request_type="knowledge_upload_file", success=False, latency=time.perf_counter() - start)
+        raise HTTPException(status_code=500, detail=f"缺少依赖: {e}")
+    except Exception as e:
+        record_request(request_type="knowledge_upload_file", success=False, latency=time.perf_counter() - start)
+        raise HTTPException(status_code=500, detail=f"文件解析失败: {sanitize_exception(e)}")
+
+    # 敏感检测
+    _scan_knowledge_sensitive(text, source=filename)
+
+    # 入库
+    manager = get_rag_manager()
+    try:
+        count = manager.add_documents(text, source=filename)
+    except Exception as e:
+        record_request(request_type="knowledge_upload_file", success=False, latency=time.perf_counter() - start)
+        raise HTTPException(status_code=500, detail=f"知识库入库失败: {sanitize_exception(e)}")
+
+    if count > 0:
+        record_knowledge_upload(count)
+    record_request(request_type="knowledge_upload_file", success=count > 0, latency=time.perf_counter() - start)
+    return {"success": count > 0, "chunks": count, "source": filename, "file_type": ext}
+
+
+# ---- 模型列表端点 ----
+# P2 新增：返回当前可用的 LLM 模型信息
+
+
+@app.get("/models")
+async def list_models():
+    """返回当前配置的 LLM 模型信息"""
+    from .llm import list_supported_providers
+
+    return {
+        "provider": settings.llm_provider,
+        "model": settings.model_name,
+        "temperature": settings.temperature,
+        "embedding_provider": settings.embedding_provider,
+        "embedding_model": settings.embedding_model,
+        "supported_providers": list_supported_providers(),
+    }
 
 
 def run():

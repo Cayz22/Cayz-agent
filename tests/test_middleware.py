@@ -765,8 +765,8 @@ class TestH2SecurityHeaders:
             assert resp2.headers.get("X-Content-Type-Options") == "nosniff"
             assert resp2.headers.get("X-Frame-Options") == "DENY"
 
-    def test_csp_allows_unsafe_inline_for_streamlit(self):
-        """CSP 应保留 'unsafe-inline' 以兼容 Streamlit 内联样式（否则 UI 会破坏）"""
+    def test_csp_allows_unsafe_inline(self):
+        """CSP 应保留 'unsafe-inline' 以兼容内联样式"""
         with patch("cayz_agent.middleware.get_settings") as mock:
             mock.return_value.api_key = ""
             mock.return_value.auth_required = False

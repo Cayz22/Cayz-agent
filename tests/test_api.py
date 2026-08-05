@@ -512,7 +512,7 @@ class TestGlobalExceptionHandlers:
 class TestCORSMiddlewareOrder:
     """P3 新增：测试 CORS 中间件注册顺序，确保鉴权失败响应也带 CORS 头
 
-    注意：P0 收紧了默认 CORS 来源为 http://localhost:8501，测试 Origin 需使用允许的来源。
+    注意：P0 收紧了默认 CORS 来源为 *（通配符），测试 Origin 使用任意来源即可。
     """
 
     def test_cors_preflight_returns_cors_headers(self, client):

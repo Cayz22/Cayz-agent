@@ -30,7 +30,6 @@ RUN python -m venv /build/venv \
 
 # 复制项目代码并安装包
 COPY cayz_agent/ ./cayz_agent/
-COPY web_app.py ./
 RUN /build/venv/bin/pip install --no-cache-dir --no-deps -e . \
     # 强制卸载并重装漏洞版本，放在所有安装之后确保最终状态正确
     # --force-reinstall 不清理旧 dist-info，Trivy 仍会扫到旧目录名
@@ -52,8 +51,10 @@ RUN apt-get update && apt-get upgrade -y --no-install-recommends \
 COPY --from=builder /build/venv /app/venv
 # 从构建阶段复制应用代码
 COPY --from=builder /build/cayz_agent /app/cayz_agent
-COPY --from=builder /build/web_app.py /app/
 COPY pyproject.toml /app/
+# 复制前端静态文件
+RUN mkdir -p /app/static
+COPY web_app.html /app/static/
 
 # 安全修复验证：扫描镜像中的 setuptools/msgpack 版本
 # 应用实际依赖（venv）：setuptools==83.0.0, msgpack==1.2.1（安全版本，见 requirements.lock）
@@ -85,5 +86,5 @@ VOLUME ["/data"]
 # 暴露 API 端口
 EXPOSE 8000
 
-# 默认启动 API 服务（可通过 CMD 覆盖为 streamlit）
+# 默认启动 API 服务
 CMD ["python", "-m", "cayz_agent.api"]

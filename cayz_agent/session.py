@@ -22,6 +22,8 @@ import sqlite3
 import time
 from threading import Lock
 
+import ormsgpack
+
 from .config import get_settings
 from .exceptions import SessionBackendError
 
@@ -29,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 # LangGraph SqliteSaver 内部表名（升级 LangGraph 时需同步检查）
 _CHECKPOINTS_TABLE = "checkpoints"
-_CHECKPOINT_BLOBS_TABLE = "checkpoint_blobs"
+_CHECKPOINT_BLOBS_TABLE = "writes"  # LangGraph 0.2+ 使用 writes 表替代旧的 checkpoint_blobs
 _SESSION_ACTIVITY_TABLE = "session_activity"
 
 # 会话活跃时间记录表 DDL
@@ -50,13 +52,54 @@ def _now() -> float:
     return time.time()
 
 
+def _deserialize_checkpoint(checkpoint_bytes: bytes, type_: str = "msgpack") -> dict:
+    """反序列化 checkpoint 数据（LangGraph 使用 ormsgpack 序列化）。
+
+    Args:
+        checkpoint_bytes: checkpoint 列的原始字节
+        type_: 序列化类型（默认 msgpack）
+
+    Returns:
+        反序列化后的 checkpoint 字典
+    """
+    if type_ == "msgpack":
+        from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+
+        serde = JsonPlusSerializer()
+        return serde.loads_typed((type_, checkpoint_bytes))
+    else:
+        raise ValueError(f"不支持的序列化类型: {type_}")
+
+
+def _extract_title(checkpoint: dict) -> str:
+    """从 checkpoint 中提取会话标题（第一条用户消息的前 30 个字符）。"""
+    try:
+        channel_values = checkpoint.get("channel_values", {})
+        messages = channel_values.get("messages", [])
+        for msg in messages:
+            if isinstance(msg, dict):
+                if msg.get("type") == "human":
+                    return str(msg.get("content", ""))[:30]
+            elif hasattr(msg, "type") and msg.type == "human":
+                return str(msg.content)[:30]
+            # 序列化格式: [module, class, content, ...]
+            elif isinstance(msg, list) and len(msg) >= 3:
+                msg_type = str(msg[1]) if len(msg) > 1 else ""
+                if "human" in msg_type.lower():
+                    return str(msg[2])[:30] if len(msg) > 2 else ""
+    except Exception:
+        pass
+    return ""
+
+
 class SessionInfo:
     """会话摘要信息"""
 
-    def __init__(self, thread_id: str, last_updated: float, message_count: int):
+    def __init__(self, thread_id: str, last_updated: float, message_count: int, title: str = ""):
         self.thread_id = thread_id
         self.last_updated = last_updated  # Unix 时间戳
         self.message_count = message_count
+        self.title = title
 
     def to_dict(self) -> dict:
         import datetime as dt
@@ -67,6 +110,7 @@ class SessionInfo:
             if self.last_updated
             else None,
             "message_count": self.message_count,
+            "title": self.title,
         }
 
 
@@ -387,39 +431,84 @@ class SessionManager:
             total_row = cursor.fetchone()
             total = total_row["cnt"] if total_row else 0
 
-            # P0 性能：LEFT JOIN + GROUP BY 一次扫描得到每个会话的消息数，
-            # 配合 idx_checkpoints_thread_id 索引，避免 N+1 子查询全表扫描
-            if owner_filter is not None:
-                cursor.execute(
-                    f"SELECT a.thread_id, a.last_active, "
-                    f"COUNT(c.thread_id) as msg_count "
-                    f"FROM {_SESSION_ACTIVITY_TABLE} a "
-                    f"LEFT JOIN {_CHECKPOINTS_TABLE} c ON c.thread_id = a.thread_id "
-                    f"WHERE a.owner = ? "
-                    f"GROUP BY a.thread_id, a.last_active "
-                    f"ORDER BY a.last_active DESC "
-                    f"LIMIT ? OFFSET ?",
-                    (owner_filter, limit, offset),
-                )
+            # 检查 checkpoints 表是否存在（首次启动时 LangGraph 懒建表，可能尚未创建）
+            cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                (_CHECKPOINTS_TABLE,),
+            )
+            has_checkpoints = cursor.fetchone() is not None
+
+            if has_checkpoints:
+                # P0 性能：LEFT JOIN + GROUP BY 一次扫描得到每个会话的消息数，
+                # 配合 idx_checkpoints_thread_id 索引，避免 N+1 子查询全表扫描
+                if owner_filter is not None:
+                    cursor.execute(
+                        f"SELECT a.thread_id, a.last_active, "
+                        f"COUNT(c.thread_id) as msg_count "
+                        f"FROM {_SESSION_ACTIVITY_TABLE} a "
+                        f"LEFT JOIN {_CHECKPOINTS_TABLE} c ON c.thread_id = a.thread_id "
+                        f"WHERE a.owner = ? "
+                        f"GROUP BY a.thread_id, a.last_active "
+                        f"ORDER BY a.last_active DESC "
+                        f"LIMIT ? OFFSET ?",
+                        (owner_filter, limit, offset),
+                    )
+                else:
+                    cursor.execute(
+                        f"SELECT a.thread_id, a.last_active, "
+                        f"COUNT(c.thread_id) as msg_count "
+                        f"FROM {_SESSION_ACTIVITY_TABLE} a "
+                        f"LEFT JOIN {_CHECKPOINTS_TABLE} c ON c.thread_id = a.thread_id "
+                        f"GROUP BY a.thread_id, a.last_active "
+                        f"ORDER BY a.last_active DESC "
+                        f"LIMIT ? OFFSET ?",
+                        (limit, offset),
+                    )
             else:
-                cursor.execute(
-                    f"SELECT a.thread_id, a.last_active, "
-                    f"COUNT(c.thread_id) as msg_count "
-                    f"FROM {_SESSION_ACTIVITY_TABLE} a "
-                    f"LEFT JOIN {_CHECKPOINTS_TABLE} c ON c.thread_id = a.thread_id "
-                    f"GROUP BY a.thread_id, a.last_active "
-                    f"ORDER BY a.last_active DESC "
-                    f"LIMIT ? OFFSET ?",
-                    (limit, offset),
-                )
+                # checkpoints 表尚未创建，仅查询 session_activity 表（msg_count 均为 0）
+                if owner_filter is not None:
+                    cursor.execute(
+                        f"SELECT thread_id, last_active, 0 as msg_count "
+                        f"FROM {_SESSION_ACTIVITY_TABLE} "
+                        f"WHERE owner = ? "
+                        f"ORDER BY last_active DESC "
+                        f"LIMIT ? OFFSET ?",
+                        (owner_filter, limit, offset),
+                    )
+                else:
+                    cursor.execute(
+                        f"SELECT thread_id, last_active, 0 as msg_count "
+                        f"FROM {_SESSION_ACTIVITY_TABLE} "
+                        f"ORDER BY last_active DESC "
+                        f"LIMIT ? OFFSET ?",
+                        (limit, offset),
+                    )
 
             sessions = []
             for row in cursor.fetchall():
+                # 提取会话标题：从最新 checkpoint 中获取第一条用户消息
+                title = ""
+                if has_checkpoints:
+                    try:
+                        # 取前 2 个 checkpoint，跳过初始空 checkpoint（只有 __start__ channel）
+                        title_cursor = conn.execute(
+                            f"SELECT type, checkpoint FROM {_CHECKPOINTS_TABLE} "
+                            "WHERE thread_id = ? ORDER BY checkpoint_id ASC LIMIT 2",
+                            (row["thread_id"],),
+                        )
+                        for title_row in title_cursor.fetchall():
+                            cp = _deserialize_checkpoint(title_row["checkpoint"], title_row["type"])
+                            title = _extract_title(cp)
+                            if title:
+                                break
+                    except Exception:
+                        pass
                 sessions.append(
                     SessionInfo(
                         thread_id=row["thread_id"],
                         last_updated=row["last_active"],
                         message_count=row["msg_count"],
+                        title=title,
                     )
                 )
 
@@ -485,6 +574,94 @@ class SessionManager:
         except Exception as e:
             logger.exception("查询会话详情失败")
             raise SessionBackendError(f"查询会话详情失败: {e}", cause=e) from e
+        finally:
+            if conn is not None:
+                conn.close()
+
+    def get_session_messages(self, thread_id: str, owner_filter: str | None = None) -> list[dict] | None:
+        """获取指定会话的消息历史
+
+        P1 IDOR 修复：owner_filter 非空时校验归属，不匹配返回 None（admin 传 None 不限制）。
+
+        从 LangGraph SqliteSaver 的 checkpoint 中提取 messages 字段，
+        返回 [{"role": "user"|"assistant", "content": "..."}, ...] 格式。
+
+        Returns:
+            消息列表；会话不存在或无权访问时返回 None
+        """
+        if not self._is_sqlite():
+            return None
+
+        conn = None
+        try:
+            conn = self._get_conn()
+            cursor = conn.cursor()
+
+            # IDOR 校验
+            if owner_filter is not None:
+                cursor.execute(
+                    f"SELECT owner FROM {_SESSION_ACTIVITY_TABLE} WHERE thread_id = ?",
+                    (thread_id,),
+                )
+                row = cursor.fetchone()
+                if row is None or row["owner"] != owner_filter:
+                    return None
+
+            # 获取最新 checkpoint（含 type 列用于反序列化）
+            cursor.execute(
+                f"SELECT type, checkpoint FROM {_CHECKPOINTS_TABLE} "
+                "WHERE thread_id = ? ORDER BY checkpoint_id DESC LIMIT 1",
+                (thread_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            # 使用 JsonPlusSerializer 反序列化（LangGraph 使用 ormsgpack）
+            checkpoint_data = _deserialize_checkpoint(row["checkpoint"], row["type"])
+            channel_values = checkpoint_data.get("channel_values", {})
+            messages_raw = channel_values.get("messages", [])
+            if not messages_raw:
+                return []
+
+            # 解析消息
+            messages = []
+            from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+
+            for msg in messages_raw:
+                try:
+                    if isinstance(msg, (HumanMessage, AIMessage, ToolMessage)):
+                        role = "user" if isinstance(msg, HumanMessage) else "assistant"
+                        content = msg.content if isinstance(msg.content, str) else str(msg.content)
+                        messages.append({"role": role, "content": content})
+                    elif isinstance(msg, (list, tuple)) and len(msg) >= 2:
+                        msg_type = str(msg[0]) if isinstance(msg[0], str) else type(msg[0]).__name__
+                        msg_data = msg[1] if len(msg) > 1 else {}
+                        if isinstance(msg_data, dict):
+                            content = msg_data.get("content", "")
+                        elif isinstance(msg_data, str):
+                            content = msg_data
+                        else:
+                            content = str(msg_data)
+                        role = "user" if "human" in msg_type.lower() else "assistant"
+                        messages.append({"role": role, "content": str(content)})
+                    elif isinstance(msg, dict):
+                        msg_type = msg.get("type", "")
+                        content = msg.get("content", "")
+                        role = "user" if msg_type == "human" else "assistant"
+                        messages.append({"role": role, "content": str(content)})
+                except Exception:
+                    logger.debug("跳过无法解析的消息: %s", type(msg).__name__)
+                    continue
+
+            return messages
+
+        except sqlite3.Error as e:
+            logger.warning("查询会话消息失败: %s", e)
+            raise SessionBackendError(f"查询会话消息失败: {e}", cause=e) from e
+        except Exception as e:
+            logger.exception("查询会话消息失败")
+            raise SessionBackendError(f"查询会话消息失败: {e}", cause=e) from e
         finally:
             if conn is not None:
                 conn.close()

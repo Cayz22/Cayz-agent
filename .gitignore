@@ -38,6 +38,8 @@ env/
 *.png
 cayz_task_progress*
 checkpoints.db
+checkpoints.db-shm
+checkpoints.db-wal
 *.db
 *.sqlite
 *.sqlite3

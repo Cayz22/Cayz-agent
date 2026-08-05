@@ -111,13 +111,17 @@ class RAGManager:
             except ImportError:
                 logger.warning("langchain-ollama 未安装，回退到 OpenAI Embeddings")
 
-        # 默认使用 OpenAI Embeddings（DashScope 也兼容）
+        # 默认使用 OpenAI Embeddings（DashScope 等非 OpenAI 提供商需禁用 tokenize）
         from langchain_openai import OpenAIEmbeddings
 
         underlying = OpenAIEmbeddings(
             api_key=self._settings.openai_api_key,
             base_url=self._settings.openai_api_base,
             model=self._settings.embedding_model,
+            # 非 OpenAI 提供商（如 DashScope）不支持 token IDs 输入，需发送原始文本
+            check_embedding_ctx_length=False,
+            # 使用 float 编码避免 base64 兼容性问题
+            encoding_format="float",
         )
         return CachedEmbeddings(underlying)
 
@@ -447,6 +451,39 @@ class RAGManager:
             return sorted(sources)
         except Exception:
             logger.exception("列出文档来源失败")
+            return []
+
+    def get_by_source(self, source: str) -> list[dict]:
+        """
+        按来源获取所有文档片段
+
+        Args:
+            source: 文档来源（metadata.source 字段）
+
+        Returns:
+            [{"id": str, "content": str, "metadata": dict}, ...]
+        """
+        if not source:
+            return []
+        try:
+            collection = self._vectorstore._collection
+            results = collection.get(
+                where={"source": source},
+                include=["documents", "metadatas"],
+            )
+            items = []
+            ids = results.get("ids", []) or []
+            docs = results.get("documents", []) or []
+            metas = results.get("metadatas", []) or []
+            for i, doc_id in enumerate(ids):
+                items.append({
+                    "id": doc_id,
+                    "content": docs[i] if i < len(docs) else "",
+                    "metadata": metas[i] if i < len(metas) else {},
+                })
+            return items
+        except Exception:
+            logger.exception("按 source 获取文档失败")
             return []
 
     def add_batch(self, items: list[dict]) -> dict:

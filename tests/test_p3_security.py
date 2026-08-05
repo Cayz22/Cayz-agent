@@ -180,7 +180,6 @@ class TestP3RequirementsLock:
             "fastapi==",
             "uvicorn==",
             "pydantic==",
-            "streamlit==",
         ]
         for dep in key_deps:
             assert dep in lock_content, f"锁文件缺少关键运行时依赖：{dep}"

@@ -2,14 +2,38 @@
 #
 # 模式 A：direct（默认，开发/内网）
 #   docker-compose up -d
-#   api 直接暴露 8000、web 直接暴露 8501（HTTP，无 TLS）
+#   api 直接暴露 8000（HTTP，无 TLS）
+#   frontend 暴露 3000（Web 聊天界面）
 #
 # 模式 B：tls（生产，nginx TLS 终止）
 #   docker-compose --profile tls up -d
-#   api/web 不直接暴露端口，仅 nginx 对外提供 80/443
-#   P1 修复：避免 api/web 端口在 tls 模式下仍被无条件暴露，导致可绕过 nginx TLS 与安全头
+#   api 不直接暴露端口，仅 nginx 对外提供 80/443
+#   frontend 由 nginx 统一代理
+#   P1 修复：避免 api 端口在 tls 模式下仍被无条件暴露，导致可绕过 nginx TLS 与安全头
 #
 # 切换：先 docker-compose down 再用新 profile 启动（不要同时启用两个 profile）
+
+# ===== 前端静态文件服务 =====
+# 服务于 web_app.html（Agent 聊天 Web 界面）
+frontend:
+  image: nginx:1.27-alpine
+  profiles: ["direct"]
+  ports:
+    - "127.0.0.1:3000:80"
+  volumes:
+    - ./web_app.html:/usr/share/nginx/html/index.html:ro
+    - ./nginx/frontend.conf:/etc/nginx/conf.d/default.conf:ro
+  depends_on:
+    api:
+      condition: service_healthy
+  restart: unless-stopped
+  networks:
+    - default
+  security_opt:
+    - no-new-privileges:true
+  mem_limit: 128m
+  cpus: 0.5
+  pids_limit: 50
 
 # nginx TLS 反向代理（仅 tls profile 启用）
 nginx:
@@ -105,74 +129,6 @@ api_tls:
   pids_limit: 200
   healthcheck:
     test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen('http://localhost:8000/health', timeout=5).read(); sys.exit(0)"]
-    interval: 30s
-    timeout: 10s
-    retries: 3
-    start_period: 40s
-
-# Streamlit Web UI（direct 模式）
-web:
-  build: .
-  profiles: ["direct"]
-  command: ["streamlit", "run", "web_app.py", "--server.port=8501", "--server.address=0.0.0.0"]
-  ports:
-    # P1 加固：默认绑定 127.0.0.1
-    - "127.0.0.1:8501:8501"
-  env_file:
-    - .env
-  environment:
-    - CHROMA_PERSIST_DIR=/data/chroma_db
-    # P0 修复：web 容器需通过服务名访问 api 容器，不能用 localhost（跨容器无法访问）
-    - WEB_API_BASE=http://api:8000
-    # P1 加固：容器时区
-    - TZ=Asia/Shanghai
-  volumes:
-    # P3：web 仅需读取 chroma_db，不需 checkpoints/backups
-    - chroma_data:/data/chroma_db
-  restart: unless-stopped
-  security_opt:
-    - no-new-privileges:true
-  mem_limit: 1g
-  cpus: 1.0
-  pids_limit: 100
-  depends_on:
-    api:
-      condition: service_healthy
-  healthcheck:
-    test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=5).read(); sys.exit(0)"]
-    interval: 30s
-    timeout: 10s
-    retries: 3
-    start_period: 40s
-
-# Streamlit Web UI（tls 模式，不发布端口）
-web_tls:
-  build: .
-  profiles: ["tls"]
-  command: ["streamlit", "run", "web_app.py", "--server.port=8501", "--server.address=0.0.0.0"]
-  expose:
-    - "8501"
-  env_file:
-    - .env
-  environment:
-    - CHROMA_PERSIST_DIR=/data/chroma_db
-    # P0 修复：web 容器需通过服务名访问 api_tls 容器，不能用 localhost
-    - WEB_API_BASE=http://api_tls:8000
-    # P1 加固：容器时区
-    - TZ=Asia/Shanghai
-  volumes:
-    - chroma_data:/data/chroma_db
-  restart: unless-stopped
-  security_opt:
-    - no-new-privileges:true
-  mem_limit: 1g
-  cpus: 1.0
-  pids_limit: 100
-  depends_on:
-    api_tls:
-      condition: service_healthy
-  healthcheck:
-    test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=5).read(); sys.exit(0)"]
     interval: 30s
     timeout: 10s
     retries: 3

@@ -63,8 +63,8 @@ class TestSettingsDefaults:
         assert s.api_host == "0.0.0.0"
         assert s.api_port == 8000
         assert s.rate_limit_per_minute == 60
-        # P0 安全默认值：CORS 收紧为本地 Streamlit 来源，非通配符 *
-        assert s.cors_allowed_origins == "http://localhost:8501"
+        # P0 安全默认值：CORS 默认为 *（允许所有来源），生产环境应通过 .env 显式配置
+        assert s.cors_allowed_origins == "*"
         # P0 安全默认值：关闭 API 文档（auth_required 默认 True 由 middleware 测试覆盖，
         # 此处 conftest 设了 AUTH_REQUIRED=false 环境变量故不直接断言）
         assert s.docs_enabled is False
