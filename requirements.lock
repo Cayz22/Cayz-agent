@@ -7,7 +7,7 @@
 #   pip-compile --generate-hashes --no-emit-index-url --output-file requirements.lock pyproject.toml
 #   然后在 Dockerfile 中取消 --require-hashes 注释即可启用供应链哈希校验。
 aiohappyeyeballs==2.7.1
-aiohttp==3.14.1
+aiohttp==3.14.3
 aiosignal==1.4.0
 aiosqlite==0.22.1
 annotated-doc==0.0.4
