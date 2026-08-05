@@ -22,8 +22,6 @@ import sqlite3
 import time
 from threading import Lock
 
-import ormsgpack
-
 from .config import get_settings
 from .exceptions import SessionBackendError
 
@@ -626,7 +624,7 @@ class SessionManager:
 
             # 解析消息
             messages = []
-            from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+            from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
             for msg in messages_raw:
                 try:
