@@ -104,7 +104,7 @@ class SessionInfo:
 
         return {
             "thread_id": self.thread_id,
-            "last_updated": dt.datetime.fromtimestamp(self.last_updated, tz=dt.UTC).isoformat()
+            "last_updated": dt.datetime.fromtimestamp(self.last_updated, tz=dt.timezone.utc).isoformat()
             if self.last_updated
             else None,
             "message_count": self.message_count,

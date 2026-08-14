@@ -109,7 +109,8 @@ def _search_with_retry(client: TavilyClient, query: str) -> dict:
 def knowledge_search(query: str):
     """
     从本地知识库中检索相关文档信息。
-    当用户询问项目文档、产品手册、内部知识、历史对话等私有知识时使用此工具。
+    当用户询问任何可能存储在知识库中的信息时（如个人信息、项目文档、产品手册、内部知识、历史对话等），必须优先使用此工具检索。
+    对于不确定是否在知识库中的问题，也应先检索再回答，绝不能直接说不知道。
     如果知识库中没有相关信息，请提示用户使用 knowledge_upload 工具上传文档。
     """
     try:
@@ -1941,7 +1942,7 @@ def unit_convert(value: float, from_unit: str, to_unit: str, category: str = "le
 AGENT_TOOLS = [
     get_current_time,
     web_search,
-    knowledge_search,
+    # knowledge_search 已移除：前置检索在 agent_node 中自动完成，LLM 无需直接调用
     knowledge_upload,
     crm_query_customer,
     crm_search_customers,
@@ -1976,7 +1977,7 @@ AGENT_TOOLS = [
 _READONLY_TOOLS = [
     get_current_time,
     web_search,
-    knowledge_search,
+    # knowledge_search 已移除：前置检索在 agent_node 中自动完成
     crm_query_customer,
     crm_search_customers,
     crm_query_order,
