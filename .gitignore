@@ -47,6 +47,10 @@ checkpoints.db-wal
 # 数据库持久化（可能含业务数据，绝不提交）
 chroma_db/
 
+# 运行时客户数据（含个人隐私信息，绝不提交）
+crm_customers.json
+crm_orders.json
+
 # 构建产物
 build/
 dist/

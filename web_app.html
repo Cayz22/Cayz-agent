@@ -540,7 +540,13 @@ async function loadSessions() {
     }
     list.innerHTML = data.sessions.map(s => {
       const active = s.thread_id === currentThreadId ? ' active' : '';
-      const title = (s.title || s.thread_id || '').substring(0, 30);
+      let title = s.title;
+      if (!title) {
+        const d = s.last_updated ? new Date(s.last_updated) : null;
+        const time = d ? d.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+        title = time ? `${time}` : (s.message_count > 0 ? '新会话' : '空会话');
+      }
+      title = title.substring(0, 30);
       return `<div class="session-item${active}" onclick="switchSession('${s.thread_id}')">
         <span class="title">${escapeHtml(title)}</span>
         <span class="del" onclick="event.stopPropagation();deleteSession('${s.thread_id}')">×</span>

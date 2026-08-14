@@ -242,6 +242,42 @@ def crm_query_customer(customer_id: str):
         return f"CRM 客户查询失败: {sanitize_exception(e)}"
 
 
+# 6. 业务系统集成工具：CRM 客户订单列表
+@tool
+@log_execution
+def crm_get_customer_orders(customer_id: str):
+    """
+    查询某客户在 CRM 系统中的全部订单明细。
+    当用户询问某客户的订单列表、订单记录、买了什么、所有订单时使用此工具。
+
+    Args:
+        customer_id: 客户ID（如 C001、C009）
+    """
+    try:
+        from .integrations import get_crm_client
+
+        client = get_crm_client()
+        customer = client.get_customer(customer_id)
+        if customer is None:
+            return f"❌ 未找到客户: {customer_id}"
+
+        orders = client.get_customer_orders(customer_id)
+        if not orders:
+            return f"📭 客户 {customer_id}（{customer.name}）暂无订单记录"
+
+        lines = [
+            f"  - {o.order_id}: {o.product} | ¥{o.amount:.2f} | {o.status} | {o.created_at}"
+            for o in orders
+        ]
+        return (
+            f"📦 客户 {customer.name}（{customer_id}）共 {len(orders)} 笔订单\n" + "\n".join(lines)
+        )
+
+    except Exception as e:
+        logger.exception("CRM 客户订单查询失败")
+        return f"CRM 客户订单查询失败: {sanitize_exception(e)}"
+
+
 # 6. 业务系统集成工具：CRM 客户搜索
 @tool
 @log_execution
@@ -273,8 +309,111 @@ def crm_search_customers(keyword: str):
         return "\n".join(lines)
 
     except Exception as e:
-        logger.exception("CRM 客户搜索失败")
-        return f"CRM 客户搜索失败: {sanitize_exception(e)}"
+        logger.exception("CRM 订单查询失败")
+        return f"CRM 订单查询失败: {sanitize_exception(e)}"
+
+
+# 8. 业务系统集成工具：CRM 新增客户
+@tool
+@log_execution
+def crm_add_customer(
+    name: str,
+    email: str,
+    phone: str,
+    company: str,
+    level: str = "普通",
+    status: str = "活跃",
+):
+    """
+    在 CRM 系统中新增一个客户，系统会自动分配客户ID。
+    当用户要求添加客户、录入客户信息、创建客户档案时使用此工具。
+
+    Args:
+        name: 客户姓名（必填）
+        email: 客户邮箱（必填）
+        phone: 客户电话（必填）
+        company: 公司名称（必填）
+        level: 客户等级，可选值：VIP / 普通 / 试用（默认"普通"）
+        status: 客户状态，可选值：活跃 / 流失 / 待跟进（默认"活跃"）
+    """
+    try:
+        from .integrations import get_crm_client
+
+        client = get_crm_client()
+        customer = client.add_customer(
+            name=name,
+            email=email,
+            phone=phone,
+            company=company,
+            level=level,
+            status=status,
+        )
+
+        return (
+            f"✅ 客户添加成功\n"
+            f"  ID: {customer.customer_id}\n"
+            f"  姓名: {customer.name}\n"
+            f"  公司: {customer.company}\n"
+            f"  邮箱: {customer.email}\n"
+            f"  电话: {customer.phone}\n"
+            f"  等级: {customer.level}\n"
+            f"  状态: {customer.status}"
+        )
+
+    except Exception as e:
+        logger.exception("CRM 新增客户失败")
+        return f"CRM 新增客户失败: {sanitize_exception(e)}"
+
+
+# 8. 业务系统集成工具：CRM 新增订单
+@tool
+@log_execution
+def crm_add_order(
+    customer_id: str,
+    product: str,
+    amount: float,
+    status: str = "处理中",
+    created_at: str | None = None,
+):
+    """
+    在 CRM 系统中为指定客户新增一笔订单，系统会自动分配订单号。
+    当用户要求添加订单、录入订单、为客户创建订单时使用此工具。
+
+    Args:
+        customer_id: 客户ID（如 C001、C009），客户必须已存在
+        product: 订单产品名称（必填）
+        amount: 订单金额（数字，必填）
+        status: 订单状态，可选值：已完成 / 处理中 / 已取消 / 已退款（默认"处理中"）
+        created_at: 下单日期（YYYY-MM-DD），不传则使用今天
+    """
+    try:
+        from .integrations import get_crm_client
+
+        client = get_crm_client()
+        order = client.add_order(
+            customer_id=customer_id,
+            product=product,
+            amount=amount,
+            status=status,
+            created_at=created_at,
+        )
+
+        if order is None:
+            return f"❌ 新增订单失败: 客户 {customer_id} 不存在，请先用 crm_add_customer 或 crm_search_customers 确认客户ID"
+
+        return (
+            f"✅ 订单添加成功\n"
+            f"  订单号: {order.order_id}\n"
+            f"  客户ID: {order.customer_id}\n"
+            f"  产品: {order.product}\n"
+            f"  金额: ¥{order.amount:.2f}\n"
+            f"  状态: {order.status}\n"
+            f"  下单日期: {order.created_at}"
+        )
+
+    except Exception as e:
+        logger.exception("CRM 新增订单失败")
+        return f"CRM 新增订单失败: {sanitize_exception(e)}"
 
 
 # 7. 业务系统集成工具：CRM 订单查询
@@ -310,6 +449,82 @@ def crm_query_order(order_id: str):
     except Exception as e:
         logger.exception("CRM 订单查询失败")
         return f"CRM 订单查询失败: {sanitize_exception(e)}"
+
+
+# 7.5 业务系统集成工具：CRM 按状态筛选订单
+@tool
+@log_execution
+def crm_get_orders_by_status(status: str):
+    """
+    按订单状态筛选 CRM 系统中的全部订单。
+    当用户询问某状态的订单列表、查看处理中/已完成/已取消/已退款的订单时使用此工具。
+
+    Args:
+        status: 订单状态，可选值：已完成 / 处理中 / 已取消 / 已退款
+    """
+    try:
+        from .integrations import get_crm_client
+
+        client = get_crm_client()
+        orders = client.get_orders_by_status(status)
+
+        if not orders:
+            return f"📭 暂无状态为「{status}」的订单"
+
+        lines = [
+            f"  - {o.order_id}: 客户{o.customer_id} | {o.product} | ¥{o.amount:.2f} | {o.created_at}"
+            for o in orders
+        ]
+        return (
+            f"📦 状态为「{status}」的订单共 {len(orders)} 笔\n" + "\n".join(lines)
+        )
+
+    except Exception as e:
+        logger.exception("CRM 按状态查询订单失败")
+        return f"CRM 按状态查询订单失败: {sanitize_exception(e)}"
+
+
+# 7.6 业务系统集成工具：CRM 客户汇总
+@tool
+@log_execution
+def crm_get_customer_summary(customer_id: str):
+    """
+    获取客户的汇总信息，包括基本资料、订单总数、累计消费金额和最近订单。
+    当用户询问客户概况、消费总额、订单统计、最近买了什么时使用此工具。
+
+    Args:
+        customer_id: 客户ID（如 C001、C009）
+    """
+    try:
+        from .integrations import get_crm_client
+
+        client = get_crm_client()
+        summary = client.get_customer_summary(customer_id)
+
+        if "error" in summary:
+            return f"❌ {summary['error']}"
+
+        c = summary["customer"]
+        lines = [
+            f"👤 客户: {c['name']}（{c['customer_id']}）",
+            f"  公司: {c['company']} | 等级: {c['level']} | 状态: {c['status']}",
+            f"  订单总数: {summary['order_count']} 笔",
+            f"  累计消费(已完成): ¥{summary['total_spent']:.2f}",
+        ]
+        if summary["recent_orders"]:
+            lines.append("  最近订单:")
+            for o in summary["recent_orders"]:
+                lines.append(
+                    f"    - {o['order_id']}: {o['product']} | ¥{o['amount']:.2f} | {o['status']} | {o['date']}"
+                )
+        else:
+            lines.append("  最近订单: 无")
+
+        return "\n".join(lines)
+
+    except Exception as e:
+        logger.exception("CRM 客户汇总查询失败")
+        return f"CRM 客户汇总查询失败: {sanitize_exception(e)}"
 
 
 # 8. 业务系统集成工具：企业微信通知
@@ -1947,6 +2162,11 @@ AGENT_TOOLS = [
     crm_query_customer,
     crm_search_customers,
     crm_query_order,
+    crm_get_customer_orders,
+    crm_get_orders_by_status,
+    crm_get_customer_summary,
+    crm_add_customer,
+    crm_add_order,
     send_wecom_notification,
     send_email,
     # P3 新增工具 - 第一梯队
@@ -1981,6 +2201,9 @@ _READONLY_TOOLS = [
     crm_query_customer,
     crm_search_customers,
     crm_query_order,
+    crm_get_customer_orders,
+    crm_get_orders_by_status,
+    crm_get_customer_summary,
     # P3 第一梯队只读工具
     calculate,
     fetch_url,
@@ -1999,7 +2222,7 @@ _READONLY_TOOLS = [
     regex_test,
     unit_convert,
 ]
-_WRITE_TOOLS = _READONLY_TOOLS + [knowledge_upload, write_file, generate_qrcode]
+_WRITE_TOOLS = _READONLY_TOOLS + [knowledge_upload, write_file, generate_qrcode, crm_add_customer, crm_add_order]
 _ADMIN_TOOLS = _WRITE_TOOLS + [send_wecom_notification, send_email]
 
 _TOOLS_BY_SCOPE = {

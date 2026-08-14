@@ -9,12 +9,19 @@ CRM 系统集成
 - 订单：订单号、客户ID、产品、金额、状态、下单日期
 """
 
+import json
 import logging
+import os
 from dataclasses import dataclass
 
 from ..config import get_settings
 
 logger = logging.getLogger(__name__)
+
+# 运行时新增客户的持久化文件（JSON），解决服务重启后新增客户丢失的问题
+_PERSIST_FILE = "crm_customers.json"
+# 运行时新增订单的持久化文件（JSON），与客户持久化同理
+_ORDER_PERSIST_FILE = "crm_orders.json"
 
 
 @dataclass
@@ -87,12 +94,102 @@ class CRMClient:
         if use_mock:
             self._customers = {c.customer_id: c for c in _MOCK_CUSTOMERS}
             self._orders = {o.order_id: o for o in _MOCK_ORDERS}
+            # 加载历史新增客户，避免服务重启后丢失
+            self._customers.update(self._load_persisted())
+            # 加载历史新增订单，避免服务重启后丢失
+            self._orders.update(self._load_persisted_orders())
         else:
             # P2-10：真实 API 模式未实现时显式失败，避免静默返回空结果
             raise NotImplementedError(
                 "CRM 真实 API 集成尚未实现。请设置 crm_use_mock=True 使用模拟数据，"
                 "或继承 CRMClient 并实现 _fetch_from_api 方法对接真实 CRM 系统。"
             )
+
+    def _load_persisted(self) -> dict:
+        """从持久化文件加载新增客户"""
+        if not os.path.exists(_PERSIST_FILE):
+            return {}
+        try:
+            with open(_PERSIST_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return {
+                item["customer_id"]: Customer(
+                    customer_id=item["customer_id"],
+                    name=item["name"],
+                    email=item["email"],
+                    phone=item["phone"],
+                    company=item["company"],
+                    level=item["level"],
+                    status=item["status"],
+                )
+                for item in data
+            }
+        except Exception as e:
+            logger.warning("加载 CRM 持久化客户失败: %s", e)
+            return {}
+
+    def _save_persisted(self) -> None:
+        """将非内置新增客户写入持久化文件"""
+        try:
+            data = [
+                {
+                    "customer_id": c.customer_id,
+                    "name": c.name,
+                    "email": c.email,
+                    "phone": c.phone,
+                    "company": c.company,
+                    "level": c.level,
+                    "status": c.status,
+                }
+                for c in self._customers.values()
+                if c.customer_id not in {m.customer_id for m in _MOCK_CUSTOMERS}
+            ]
+            with open(_PERSIST_FILE, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning("保存 CRM 持久化客户失败: %s", e)
+
+    def _load_persisted_orders(self) -> dict:
+        """从持久化文件加载新增订单"""
+        if not os.path.exists(_ORDER_PERSIST_FILE):
+            return {}
+        try:
+            with open(_ORDER_PERSIST_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return {
+                item["order_id"]: Order(
+                    order_id=item["order_id"],
+                    customer_id=item["customer_id"],
+                    product=item["product"],
+                    amount=item["amount"],
+                    status=item["status"],
+                    created_at=item["created_at"],
+                )
+                for item in data
+            }
+        except Exception as e:
+            logger.warning("加载 CRM 持久化订单失败: %s", e)
+            return {}
+
+    def _save_persisted_orders(self) -> None:
+        """将非内置新增订单写入持久化文件"""
+        try:
+            data = [
+                {
+                    "order_id": o.order_id,
+                    "customer_id": o.customer_id,
+                    "product": o.product,
+                    "amount": o.amount,
+                    "status": o.status,
+                    "created_at": o.created_at,
+                }
+                for o in self._orders.values()
+                if o.order_id not in {m.order_id for m in _MOCK_ORDERS}
+            ]
+            with open(_ORDER_PERSIST_FILE, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning("保存 CRM 持久化订单失败: %s", e)
 
     def get_customer(self, customer_id: str) -> Customer | None:
         """根据客户ID查询客户信息"""
@@ -143,6 +240,78 @@ class CRMClient:
         orders = [o for o in self._orders.values() if o.status == status]
         logger.info("CRM 查询完成: 状态 %s 有 %d 个订单", status, len(orders))
         return orders
+
+    def add_customer(
+        self,
+        name: str,
+        email: str,
+        phone: str,
+        company: str,
+        level: str = "普通",
+        status: str = "活跃",
+    ) -> Customer:
+        """新增客户，自动分配客户ID"""
+        # 自动生成客户ID（C009 起）
+        existing_ids = [int(c.customer_id[1:]) for c in self._customers.values()]
+        next_id = max(existing_ids) + 1 if existing_ids else 1
+        customer_id = f"C{next_id:03d}"
+
+        customer = Customer(
+            customer_id=customer_id,
+            name=name.strip(),
+            email=email.strip(),
+            phone=phone.strip(),
+            company=company.strip(),
+            level=level.strip(),
+            status=status.strip(),
+        )
+        self._customers[customer_id] = customer
+        self._save_persisted()
+        logger.info("CRM 新增客户: %s (%s, %s)", customer_id, name, company)
+        return customer
+
+    def add_order(
+        self,
+        customer_id: str,
+        product: str,
+        amount: float,
+        status: str = "处理中",
+        created_at: str | None = None,
+    ) -> Order:
+        """新增订单，自动分配订单号。客户必须存在，否则返回 None。"""
+        customer = self._customers.get(customer_id)
+        if customer is None:
+            logger.warning("CRM 新增订单失败: 客户不存在 %s", customer_id)
+            return None
+
+        # 自动生成订单号（ORD-YYYY-NNN）
+        from datetime import datetime
+
+        year = datetime.now().strftime("%Y")
+        prefix = f"ORD-{year}-"
+        existing_nums = [
+            int(o.order_id[len(prefix):])
+            for o in self._orders.values()
+            if o.order_id.startswith(prefix)
+        ]
+        next_num = (max(existing_nums) + 1) if existing_nums else 1
+        order_id = f"{prefix}{next_num:03d}"
+
+        if created_at is None:
+            created_at = datetime.now().strftime("%Y-%m-%d")
+
+        order = Order(
+            order_id=order_id,
+            customer_id=customer_id,
+            product=product.strip(),
+            amount=float(amount),
+            status=status.strip(),
+            created_at=created_at,
+        )
+        self._orders[order_id] = order
+        self._save_persisted_orders()
+        logger.info("CRM 新增订单: %s (%s, ¥%.2f)", order_id, product, amount)
+        return order
 
     def get_customer_summary(self, customer_id: str) -> dict:
         """获取客户汇总信息（含订单统计）"""

@@ -38,7 +38,7 @@
 - **联网搜索**：基于 Tavily API 的实时互联网搜索
 - **知识库检索（RAG）**：ChromaDB 向量存储 + 文档切片 + 语义检索，支持 .txt / .md / .pdf
 - **多 Agent 协作**：路由 Agent 自动分发到知识库 / 搜索 / 通用对话 / 业务集成子 Agent
-- **业务系统集成**：CRM 客户查询、企业微信通知、SMTP 邮件发送
+- **业务系统集成**：CRM 客户与订单管理（查询/搜索/汇总/新增，JSON 持久化）、企业微信通知、SMTP 邮件发送
 - **工具扩展**：Excel 文件解析、二维码生成等
 - **企业级安全**：API Key 鉴权（三级权限）、请求限流、输入校验、敏感内容检测、HTTPS 强制
 - **可观测性**：Prometheus 指标导出、结构化日志、告警 watcher
@@ -53,7 +53,7 @@ cayz-agent/
 │   ├── api.py               # FastAPI REST 服务（21+ 端点）
 │   ├── graph.py             # 单 Agent LangGraph 图
 │   ├── multi_agent.py       # 多 Agent 协作架构
-│   ├── tools.py             # 工具集（25+ 工具）
+│   ├── tools.py             # 工具集（29+ 工具）
 │   ├── rag.py               # RAG 子系统（ChromaDB）
 │   ├── llm.py               # 多模型工厂
 │   ├── config.py            # 集中配置管理
@@ -213,15 +213,27 @@ User → Router Agent → ┬→ Knowledge Agent（RAG 检索）
 |------|------|----------|
 | `get_current_time` | 获取当前日期时间 | 只读 |
 | `web_search` | 联网搜索 | 只读 |
-| `knowledge_search` | 知识库检索 | 只读 |
 | `knowledge_upload` | 上传知识库文档 | 读写 |
 | `crm_query_customer` | CRM 客户查询 | 只读 |
 | `crm_search_customers` | CRM 客户搜索 | 只读 |
-| `crm_query_orders` | CRM 订单查询 | 只读 |
-| `send_wecom_notify` | 企业微信通知 | 读写 |
+| `crm_query_order` | CRM 订单查询 | 只读 |
+| `crm_get_customer_orders` | CRM 客户订单列表 | 只读 |
+| `crm_get_orders_by_status` | CRM 按状态筛选订单 | 只读 |
+| `crm_get_customer_summary` | CRM 客户汇总（消费/订单统计） | 只读 |
+| `crm_add_customer` | CRM 新增客户（JSON 持久化） | 读写 |
+| `crm_add_order` | CRM 新增订单（JSON 持久化） | 读写 |
+| `send_wecom_notification` | 企业微信通知 | 读写 |
 | `send_email` | SMTP 邮件发送 | 读写 |
-| `parse_excel` | Excel 文件解析 | 只读 |
-| `generate_qrcode` | 二维码生成 | 只读 |
+| `calculate` | 数学计算 | 只读 |
+| `fetch_url` | URL 内容抓取 | 只读 |
+| `read_file` / `write_file` | 本地文件读写 | 只读/读写 |
+| `python_repl` | Python 代码执行 | 只读 |
+| `parse_pdf` / `parse_excel` / `parse_csv` | 文档解析 | 只读 |
+| `generate_qrcode` | 二维码生成 | 读写 |
+| `get_weather` | 天气查询 | 只读 |
+| `get_exchange_rate` | 汇率查询 | 只读 |
+| `translate` | 文本翻译 | 只读 |
+| `hash_encode` / `text_diff` / `regex_test` / `unit_convert` | 离线基础工具 | 只读 |
 
 ## 企业级特性
 
