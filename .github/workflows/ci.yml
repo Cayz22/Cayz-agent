@@ -102,13 +102,14 @@ jobs:
         # --ignore-vuln：chromadb 1.5.9 的 CVE-2026-45829 (trust_remote_code 代码注入)，
         #   当前已是最新版（1.5.9），上游尚未发布修复版本。
         #   本项目使用嵌入式 ChromaDB，不暴露 HTTP 端点，不设 trust_remote_code=true，实际不可利用。
-        #   两个编号是同一漏洞的不同数据库别名，需分别 ignore。
+        #   三个编号是同一漏洞的不同数据库别名（PyPA/GitHub/NVD），pip-audit 按条目分别报告，需分别 ignore。
         run: |
           pip-audit \
             --requirement requirements.lock \
             --desc on \
             --ignore-vuln=PYSEC-2026-311 \
-            --ignore-vuln=GHSA-f4j7-r4q5-qw2c
+            --ignore-vuln=GHSA-f4j7-r4q5-qw2c \
+            --ignore-vuln=CVE-2026-45829
 
       - name: Install Trivy (pinned version)
         # P1 供应链加固：固定版本 + 经 GitHub API 取真实资产 URL（不手拼命名，杜绝 404）。

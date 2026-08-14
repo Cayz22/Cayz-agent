@@ -241,7 +241,7 @@ BUSINESS_PROMPT = """你是一个业务系统集成专家。处理用户涉及 C
 可用工具及使用场景：
 1. crm_query_customer(customer_id)：查询客户基本信息和订单汇总（customer_id 形如 C001）
 2. crm_search_customers(keyword)：按姓名/公司/邮箱模糊搜索客户
-3. crm_query_order(order_id)：查询订单详情（order_id 形如 ORD-2024-001）
+3. crm_query_order(order_id)：查询订单详情（order_id 形如 ORD-2026-001）
 4. send_wecom_notification(message, msg_type="text")：通过企业微信群机器人发送通知
 5. send_email(to, subject, body, html=False)：通过 SMTP 发送邮件（to 多地址用逗号分隔）
 

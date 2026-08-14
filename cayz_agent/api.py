@@ -752,10 +752,12 @@ async def chat_stream(req: ChatRequest, request: Request):
                 config=config,
                 stream_mode="messages",
             ):
-                logger.info("stream chunk: type=%s, content=%r, tool_calls=%s",
-                             type(chunk).__name__,
-                             str(chunk.content)[:100] if chunk.content else "(empty)",
-                             bool(getattr(chunk, 'tool_calls', None)))
+                logger.info(
+                    "stream chunk: type=%s, content=%r, tool_calls=%s",
+                    type(chunk).__name__,
+                    str(chunk.content)[:100] if chunk.content else "(empty)",
+                    bool(getattr(chunk, "tool_calls", None)),
+                )
                 if isinstance(chunk, (AIMessageChunk, AIMessage)) and chunk.content:
                     raw += chunk.content
                     # 实时脱敏：在每个 chunk 发出前先 sanitize，避免敏感信息已发到客户端

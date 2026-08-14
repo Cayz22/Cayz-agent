@@ -67,9 +67,9 @@ class TestCRMClient:
     def test_get_order_by_id(self):
         """根据订单号查询订单"""
         client = CRMClient(use_mock=True)
-        order = client.get_order("ORD-2024-001")
+        order = client.get_order("ORD-2026-001")
         assert order is not None
-        assert order.order_id == "ORD-2024-001"
+        assert order.order_id == "ORD-2026-001"
         assert order.customer_id == "C001"
         assert order.product == "企业版AI助手年付"
         assert order.amount == 120000.00

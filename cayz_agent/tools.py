@@ -286,7 +286,7 @@ def crm_query_order(order_id: str):
     当用户询问订单状态、订单详情时使用此工具。
 
     Args:
-        order_id: 订单号（如 ORD-2024-001）
+        order_id: 订单号（如 ORD-2026-001）
     """
     try:
         from .integrations import get_crm_client

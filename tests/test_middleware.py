@@ -407,6 +407,7 @@ class TestRateLimitSweep:
 
         mw = RateLimitMiddleware(app=_dummy_app)
         mw._SWEEP_INTERVAL = 0  # 强制每次 dispatch 都触发 sweep
+        mw._last_sweep = 0.0  # 确保 now - _last_sweep > 0（Windows 时间分辨率低，可能相等）
 
         # 注入一个 ghost client（有过期记录）
         mw._hits["ghost"] = deque()
