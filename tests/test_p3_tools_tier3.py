@@ -423,7 +423,7 @@ class TestToolScopePermissionsTier3:
             assert tool_name in tool_names, f"{tool_name} 不在 admin scope"
 
     def test_total_tool_count(self):
-        """验证工具总数：8 原始 + 5 一梯队 + 7 二梯队 + 4 三梯队 = 24
+        """验证工具总数：8 原始 + 5 一梯队 + 7 二梯队 + 4 三梯队 + 5 CRM = 29
         （knowledge_search 已改为 agent_node 前置检索，不再注册为 LLM 工具）"""
         admin_tools = get_tools_for_scope("admin")
-        assert len(admin_tools) == 24
+        assert len(admin_tools) == 29

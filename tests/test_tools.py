@@ -16,6 +16,10 @@ import pytest
 from langchain_core.documents import Document
 
 from cayz_agent.tools import (
+    crm_add_order,
+    crm_get_customer_orders,
+    crm_get_customer_summary,
+    crm_get_orders_by_status,
     crm_query_customer,
     crm_query_order,
     crm_search_customers,
@@ -504,6 +508,236 @@ class TestCrmQueryOrder:
             patch("cayz_agent.tools.sanitize_exception", return_value="敏感信息已隐藏"),
         ):
             result = crm_query_order.invoke({"order_id": "ORD-001"})
+
+        assert "敏感信息已隐藏" in result or "sk-leaked" not in result
+
+
+# ============================================================
+# P4 新增：CRM 扩展工具测试（客户订单列表 / 按状态筛选 / 客户汇总 / 新增订单）
+# ============================================================
+
+
+class TestCrmGetCustomerOrders:
+    """测试 crm_get_customer_orders 工具"""
+
+    def test_orders_exist(self):
+        """客户有订单应返回订单列表"""
+        from cayz_agent.integrations.crm import Order
+
+        mock_client = MagicMock()
+        mock_client.get_customer.return_value = MagicMock(name="张伟")
+        mock_client.get_customer_orders.return_value = [
+            Order("ORD-2026-001", "C009", "企业版年付", 120000.0, "已完成", "2026-01-15"),
+            Order("ORD-2026-010", "C009", "API包", 5000.0, "处理中", "2026-05-20"),
+        ]
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_get_customer_orders.invoke({"customer_id": "C009"})
+
+        assert "2" in result
+        assert "ORD-2026-001" in result
+        assert "ORD-2026-010" in result
+        assert "120000" in result
+
+    def test_customer_not_found(self):
+        """客户不存在应返回未找到"""
+        mock_client = MagicMock()
+        mock_client.get_customer.return_value = None
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_get_customer_orders.invoke({"customer_id": "C999"})
+
+        assert "未找到" in result or "C999" in result
+
+    def test_no_orders(self):
+        """客户无订单应返回空提示"""
+        mock_client = MagicMock()
+        mock_client.get_customer.return_value = MagicMock(name="李娜")
+        mock_client.get_customer_orders.return_value = []
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_get_customer_orders.invoke({"customer_id": "C002"})
+
+        assert "暂无订单" in result or "无订单" in result
+
+    def test_exception_sanitized(self):
+        """异常应被捕获并脱敏"""
+        mock_client = MagicMock()
+        mock_client.get_customer_orders.side_effect = RuntimeError("sk-leaked")
+
+        with (
+            patch("cayz_agent.integrations.get_crm_client", return_value=mock_client),
+            patch("cayz_agent.tools.sanitize_exception", return_value="敏感信息已隐藏"),
+        ):
+            result = crm_get_customer_orders.invoke({"customer_id": "C009"})
+
+        assert "敏感信息已隐藏" in result or "sk-leaked" not in result
+
+
+class TestCrmGetOrdersByStatus:
+    """测试 crm_get_orders_by_status 工具"""
+
+    def test_status_matches(self):
+        """按状态筛选应返回对应订单"""
+        from cayz_agent.integrations.crm import Order
+
+        mock_client = MagicMock()
+        mock_client.get_orders_by_status.return_value = [
+            Order("ORD-2026-004", "C002", "定制训练", 50000.0, "处理中", "2026-06-01"),
+        ]
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_get_orders_by_status.invoke({"status": "处理中"})
+
+        assert "1" in result
+        assert "ORD-2026-004" in result
+        assert "处理中" in result
+
+    def test_status_no_matches(self):
+        """无此状态订单应返回空提示"""
+        mock_client = MagicMock()
+        mock_client.get_orders_by_status.return_value = []
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_get_orders_by_status.invoke({"status": "已退款"})
+
+        assert "暂无" in result
+
+    def test_exception_sanitized(self):
+        """异常应被捕获并脱敏"""
+        mock_client = MagicMock()
+        mock_client.get_orders_by_status.side_effect = RuntimeError("sk-leaked")
+
+        with (
+            patch("cayz_agent.integrations.get_crm_client", return_value=mock_client),
+            patch("cayz_agent.tools.sanitize_exception", return_value="敏感信息已隐藏"),
+        ):
+            result = crm_get_orders_by_status.invoke({"status": "已完成"})
+
+        assert "敏感信息已隐藏" in result or "sk-leaked" not in result
+
+
+class TestCrmGetCustomerSummary:
+    """测试 crm_get_customer_summary 工具"""
+
+    def test_summary_with_orders(self):
+        """客户有订单时应返回汇总信息"""
+        mock_client = MagicMock()
+        mock_client.get_customer_summary.return_value = {
+            "customer": {
+                "customer_id": "C009",
+                "name": "周杰",
+                "company": "华为技术",
+                "level": "VIP",
+                "status": "活跃",
+            },
+            "order_count": 2,
+            "total_spent": 125000.0,
+            "recent_orders": [
+                {"order_id": "ORD-001", "product": "云服务器", "amount": 5000.0,
+                 "status": "已完成", "date": "2026-01-15"},
+            ],
+        }
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_get_customer_summary.invoke({"customer_id": "C009"})
+
+        assert "周杰" in result
+        assert "2" in result
+        assert "125000" in result
+        assert "ORD-001" in result
+
+    def test_summary_customer_not_found(self):
+        """客户不存在应返回错误"""
+        mock_client = MagicMock()
+        mock_client.get_customer_summary.return_value = {"error": "未找到客户: C999"}
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_get_customer_summary.invoke({"customer_id": "C999"})
+
+        assert "未找到" in result or "C999" in result
+
+    def test_summary_no_recent_orders(self):
+        """客户无最近订单应显示'无'"""
+        mock_client = MagicMock()
+        mock_client.get_customer_summary.return_value = {
+            "customer": {
+                "customer_id": "C002",
+                "name": "李娜",
+                "company": "腾讯",
+                "level": "普通",
+                "status": "活跃",
+            },
+            "order_count": 0,
+            "total_spent": 0.0,
+            "recent_orders": [],
+        }
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_get_customer_summary.invoke({"customer_id": "C002"})
+
+        assert "无" in result
+
+    def test_exception_sanitized(self):
+        """异常应被捕获并脱敏"""
+        mock_client = MagicMock()
+        mock_client.get_customer_summary.side_effect = RuntimeError("sk-leaked")
+
+        with (
+            patch("cayz_agent.integrations.get_crm_client", return_value=mock_client),
+            patch("cayz_agent.tools.sanitize_exception", return_value="敏感信息已隐藏"),
+        ):
+            result = crm_get_customer_summary.invoke({"customer_id": "C001"})
+
+        assert "敏感信息已隐藏" in result or "sk-leaked" not in result
+
+
+class TestCrmAddOrder:
+    """测试 crm_add_order 工具"""
+
+    def test_add_order_success(self):
+        """新增订单成功应返回订单信息"""
+        from cayz_agent.integrations.crm import Order
+
+        mock_client = MagicMock()
+        mock_client.add_order.return_value = Order(
+            order_id="ORD-2026-012", customer_id="C009", product="API调用包",
+            amount=8000.0, status="处理中", created_at="2026-08-14",
+        )
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_add_order.invoke(
+                {"customer_id": "C009", "product": "API调用包", "amount": 8000.0}
+            )
+
+        assert "成功" in result
+        assert "ORD-2026-012" in result
+        assert "8000" in result
+
+    def test_add_order_customer_missing(self):
+        """客户不存在应返回失败提示"""
+        mock_client = MagicMock()
+        mock_client.add_order.return_value = None
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_add_order.invoke(
+                {"customer_id": "C999", "product": "产品", "amount": 100.0}
+            )
+
+        assert "不存在" in result or "失败" in result
+
+    def test_exception_sanitized(self):
+        """异常应被捕获并脱敏"""
+        mock_client = MagicMock()
+        mock_client.add_order.side_effect = RuntimeError("sk-leaked")
+
+        with (
+            patch("cayz_agent.integrations.get_crm_client", return_value=mock_client),
+            patch("cayz_agent.tools.sanitize_exception", return_value="敏感信息已隐藏"),
+        ):
+            result = crm_add_order.invoke(
+                {"customer_id": "C001", "product": "产品", "amount": 100.0}
+            )
 
         assert "敏感信息已隐藏" in result or "sk-leaked" not in result
 
