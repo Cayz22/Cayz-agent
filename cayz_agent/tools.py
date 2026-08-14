@@ -265,13 +265,8 @@ def crm_get_customer_orders(customer_id: str):
         if not orders:
             return f"📭 客户 {customer_id}（{customer.name}）暂无订单记录"
 
-        lines = [
-            f"  - {o.order_id}: {o.product} | ¥{o.amount:.2f} | {o.status} | {o.created_at}"
-            for o in orders
-        ]
-        return (
-            f"📦 客户 {customer.name}（{customer_id}）共 {len(orders)} 笔订单\n" + "\n".join(lines)
-        )
+        lines = [f"  - {o.order_id}: {o.product} | ¥{o.amount:.2f} | {o.status} | {o.created_at}" for o in orders]
+        return f"📦 客户 {customer.name}（{customer_id}）共 {len(orders)} 笔订单\n" + "\n".join(lines)
 
     except Exception as e:
         logger.exception("CRM 客户订单查询失败")
@@ -472,12 +467,9 @@ def crm_get_orders_by_status(status: str):
             return f"📭 暂无状态为「{status}」的订单"
 
         lines = [
-            f"  - {o.order_id}: 客户{o.customer_id} | {o.product} | ¥{o.amount:.2f} | {o.created_at}"
-            for o in orders
+            f"  - {o.order_id}: 客户{o.customer_id} | {o.product} | ¥{o.amount:.2f} | {o.created_at}" for o in orders
         ]
-        return (
-            f"📦 状态为「{status}」的订单共 {len(orders)} 笔\n" + "\n".join(lines)
-        )
+        return f"📦 状态为「{status}」的订单共 {len(orders)} 笔\n" + "\n".join(lines)
 
     except Exception as e:
         logger.exception("CRM 按状态查询订单失败")

@@ -110,7 +110,7 @@ class CRMClient:
         if not os.path.exists(_PERSIST_FILE):
             return {}
         try:
-            with open(_PERSIST_FILE, "r", encoding="utf-8") as f:
+            with open(_PERSIST_FILE, encoding="utf-8") as f:
                 data = json.load(f)
             return {
                 item["customer_id"]: Customer(
@@ -154,7 +154,7 @@ class CRMClient:
         if not os.path.exists(_ORDER_PERSIST_FILE):
             return {}
         try:
-            with open(_ORDER_PERSIST_FILE, "r", encoding="utf-8") as f:
+            with open(_ORDER_PERSIST_FILE, encoding="utf-8") as f:
                 data = json.load(f)
             return {
                 item["order_id"]: Order(
@@ -289,11 +289,7 @@ class CRMClient:
 
         year = datetime.now().strftime("%Y")
         prefix = f"ORD-{year}-"
-        existing_nums = [
-            int(o.order_id[len(prefix):])
-            for o in self._orders.values()
-            if o.order_id.startswith(prefix)
-        ]
+        existing_nums = [int(o.order_id[len(prefix) :]) for o in self._orders.values() if o.order_id.startswith(prefix)]
         next_num = (max(existing_nums) + 1) if existing_nums else 1
         order_id = f"{prefix}{next_num:03d}"
 

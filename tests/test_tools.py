@@ -634,8 +634,13 @@ class TestCrmGetCustomerSummary:
             "order_count": 2,
             "total_spent": 125000.0,
             "recent_orders": [
-                {"order_id": "ORD-001", "product": "云服务器", "amount": 5000.0,
-                 "status": "已完成", "date": "2026-01-15"},
+                {
+                    "order_id": "ORD-001",
+                    "product": "云服务器",
+                    "amount": 5000.0,
+                    "status": "已完成",
+                    "date": "2026-01-15",
+                },
             ],
         }
 
@@ -701,14 +706,16 @@ class TestCrmAddOrder:
 
         mock_client = MagicMock()
         mock_client.add_order.return_value = Order(
-            order_id="ORD-2026-012", customer_id="C009", product="API调用包",
-            amount=8000.0, status="处理中", created_at="2026-08-14",
+            order_id="ORD-2026-012",
+            customer_id="C009",
+            product="API调用包",
+            amount=8000.0,
+            status="处理中",
+            created_at="2026-08-14",
         )
 
         with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
-            result = crm_add_order.invoke(
-                {"customer_id": "C009", "product": "API调用包", "amount": 8000.0}
-            )
+            result = crm_add_order.invoke({"customer_id": "C009", "product": "API调用包", "amount": 8000.0})
 
         assert "成功" in result
         assert "ORD-2026-012" in result
@@ -720,9 +727,7 @@ class TestCrmAddOrder:
         mock_client.add_order.return_value = None
 
         with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
-            result = crm_add_order.invoke(
-                {"customer_id": "C999", "product": "产品", "amount": 100.0}
-            )
+            result = crm_add_order.invoke({"customer_id": "C999", "product": "产品", "amount": 100.0})
 
         assert "不存在" in result or "失败" in result
 
@@ -735,9 +740,7 @@ class TestCrmAddOrder:
             patch("cayz_agent.integrations.get_crm_client", return_value=mock_client),
             patch("cayz_agent.tools.sanitize_exception", return_value="敏感信息已隐藏"),
         ):
-            result = crm_add_order.invoke(
-                {"customer_id": "C001", "product": "产品", "amount": 100.0}
-            )
+            result = crm_add_order.invoke({"customer_id": "C001", "product": "产品", "amount": 100.0})
 
         assert "敏感信息已隐藏" in result or "sk-leaked" not in result
 
