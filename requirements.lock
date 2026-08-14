@@ -37,7 +37,7 @@ googleapis-common-protos==1.75.0
 greenlet==3.5.3
 grpcio==1.82.1
 h11==0.16.0
-h2==4.3.0
+h2==4.4.1
 hf-xet==1.5.1
 hpack==4.2.0
 httpcore==1.0.9
@@ -67,7 +67,7 @@ langchain-protocol==0.0.18
 langchain-text-splitters==1.1.2
 langgraph==1.2.7
 langgraph-checkpoint==4.1.1
-langgraph-checkpoint-sqlite==3.1.0
+langgraph-checkpoint-sqlite==3.1.1
 langgraph-prebuilt==1.1.0
 langgraph-sdk==0.4.2
 langsmith==0.9.6
@@ -106,7 +106,7 @@ pydantic==2.13.4
 pydantic-settings==2.14.2
 pydantic_core==2.46.4
 Pygments==2.20.0
-pypdf==6.14.2
+pypdf==6.15.0
 PyPika==0.51.1
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.2
