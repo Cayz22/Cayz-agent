@@ -16,7 +16,12 @@ import pytest
 from langchain_core.documents import Document
 
 from cayz_agent.tools import (
+    crm_add_customer,
     crm_add_order,
+    crm_archive_customer,
+    crm_archive_order,
+    crm_delete_customer,
+    crm_delete_order,
     crm_get_customer_orders,
     crm_get_customer_summary,
     crm_get_orders_by_status,
@@ -749,6 +754,39 @@ class TestCrmRestore:
         mock_client.restore_customer.assert_called_once_with("C010")
         assert "恢复" in result
 
+    def test_restore_customer_not_archived(self):
+        """未归档客户应提示无需恢复"""
+        from cayz_agent.integrations.crm import Customer
+
+        active = Customer("C001", "张伟", "zhangwei@example.com", "13800138001", "阿里巴巴", "VIP", "活跃")
+        mock_client = MagicMock()
+        mock_client.list_customers.return_value = [active]
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_restore_customer.invoke({"customer_id": "C001"})
+
+        assert "未归档，无需恢复" in result
+
+    def test_restore_customer_not_found(self):
+        """不存在的客户应提示未找到"""
+        mock_client = MagicMock()
+        mock_client.list_customers.return_value = []
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_restore_customer.invoke({"customer_id": "C999"})
+
+        assert "未找到客户" in result
+
+    def test_restore_customer_exception_sanitized(self):
+        """恢复客户异常应被净化并返回错误信息"""
+        mock_client = MagicMock()
+        mock_client.list_customers.side_effect = RuntimeError("boom")
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_restore_customer.invoke({"customer_id": "C010"})
+
+        assert "恢复客户失败" in result
+
     def test_restore_order_locates_archived(self):
         """已归档订单应能被恢复工具定位并进入确认流程"""
         from cayz_agent.integrations.crm import Order
@@ -763,6 +801,349 @@ class TestCrmRestore:
         assert "未找到订单" not in result
         assert "ORD-2026-001" in result
         assert "已归档" in result
+
+    def test_restore_order_confirmed_calls_client(self):
+        """确认后按真实订单号恢复订单"""
+        from cayz_agent.integrations.crm import Order
+
+        archived_order = Order("ORD-2026-001", "C001", "企业版AI助手年付", 120000.0, "已归档", "2026-01-15")
+        mock_client = MagicMock()
+        mock_client.list_orders.return_value = [archived_order]
+        mock_client.restore_order.return_value = archived_order
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_restore_order.invoke({"order_id": "企业版AI助手年付", "confirmed": True})
+
+        mock_client.restore_order.assert_called_once_with("ORD-2026-001")
+        assert "恢复" in result
+
+    def test_restore_order_not_archived(self):
+        """未归档订单应提示无需恢复"""
+        from cayz_agent.integrations.crm import Order
+
+        active = Order("ORD-2026-001", "C001", "企业版AI助手年付", 120000.0, "已完成", "2026-01-15")
+        mock_client = MagicMock()
+        mock_client.list_orders.return_value = [active]
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_restore_order.invoke({"order_id": "ORD-2026-001"})
+
+        assert "未归档，无需恢复" in result
+
+    def test_restore_order_not_found(self):
+        """不存在的订单应提示未找到"""
+        mock_client = MagicMock()
+        mock_client.list_orders.return_value = []
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_restore_order.invoke({"order_id": "ORD-999"})
+
+        assert "未找到订单" in result
+
+
+class TestCrmArchive:
+    """测试 crm_archive_customer / crm_archive_order 工具"""
+
+    def _active_customer(self):
+        from cayz_agent.integrations.crm import Customer
+
+        return Customer("C001", "张伟", "zhangwei@example.com", "13800138001", "阿里巴巴", "VIP", "活跃")
+
+    def _active_order(self):
+        from cayz_agent.integrations.crm import Order
+
+        return Order("ORD-2026-001", "C001", "企业版AI助手年付", 120000.0, "已完成", "2026-01-15")
+
+    def test_archive_customer_requires_confirmation(self):
+        """归档客户应先展示确认信息"""
+        mock_client = MagicMock()
+        mock_client.list_customers.return_value = [self._active_customer()]
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_archive_customer.invoke({"customer_id": "C001"})
+
+        assert "确认" in result
+        assert "张伟" in result
+        mock_client.archive_customer.assert_not_called()
+
+    def test_archive_customer_confirmed_calls_client(self):
+        """确认后应按真实 ID 归档客户"""
+        mock_client = MagicMock()
+        mock_client.list_customers.return_value = [self._active_customer()]
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            crm_archive_customer.invoke({"customer_id": "张伟", "confirmed": True})
+
+        mock_client.archive_customer.assert_called_once_with("C001")
+
+    def test_archive_customer_already_archived(self):
+        """已归档客户应提示无需重复归档"""
+        from cayz_agent.integrations.crm import Customer
+
+        archived = Customer("C010", "小林", "linxi@xyz.com", "13600001111", "公司10", "普通", "已归档")
+        mock_client = MagicMock()
+        mock_client.list_customers.return_value = [archived]
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_archive_customer.invoke({"customer_id": "C010"})
+
+        assert "归档状态" in result
+        assert "无需重复归档" in result
+
+    def test_archive_customer_not_found(self):
+        """不存在的客户应提示未找到"""
+        mock_client = MagicMock()
+        mock_client.list_customers.return_value = []
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_archive_customer.invoke({"customer_id": "C999"})
+
+        assert "未找到客户" in result
+
+    def test_archive_order_confirmed_calls_client(self):
+        """确认后应按真实订单号归档订单"""
+        mock_client = MagicMock()
+        mock_client.list_orders.return_value = [self._active_order()]
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            crm_archive_order.invoke({"order_id": "企业版AI助手年付", "confirmed": True})
+
+        mock_client.archive_order.assert_called_once_with("ORD-2026-001")
+
+    def test_archive_order_requires_confirmation(self):
+        """归档订单应先展示确认信息"""
+        mock_client = MagicMock()
+        mock_client.list_orders.return_value = [self._active_order()]
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_archive_order.invoke({"order_id": "ORD-2026-001"})
+
+        assert "确认" in result
+        assert "企业版AI助手年付" in result
+        mock_client.archive_order.assert_not_called()
+
+    def test_archive_order_already_archived(self):
+        """已归档订单应提示无需重复归档"""
+        from cayz_agent.integrations.crm import Order
+
+        archived = Order("ORD-2026-001", "C001", "企业版AI助手年付", 120000.0, "已归档", "2026-01-15")
+        mock_client = MagicMock()
+        mock_client.list_orders.return_value = [archived]
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_archive_order.invoke({"order_id": "ORD-2026-001"})
+
+        assert "无需重复归档" in result
+
+    def test_archive_order_not_found(self):
+        """不存在的订单应提示未找到"""
+        mock_client = MagicMock()
+        mock_client.list_orders.return_value = []
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_archive_order.invoke({"order_id": "ORD-999"})
+
+        assert "未找到订单" in result
+
+    def test_archive_customer_exception_sanitized(self):
+        """归档客户异常应被净化并返回错误信息"""
+        mock_client = MagicMock()
+        mock_client.list_customers.side_effect = RuntimeError("boom")
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_archive_customer.invoke({"customer_id": "C001"})
+
+        assert "归档客户失败" in result
+
+    def test_archive_order_exception_sanitized(self):
+        """归档订单异常应被净化并返回错误信息"""
+        mock_client = MagicMock()
+        mock_client.list_orders.side_effect = RuntimeError("boom")
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_archive_order.invoke({"order_id": "ORD-2026-001"})
+
+        assert "归档订单失败" in result
+
+
+class TestCrmDelete:
+    """测试 crm_delete_customer / crm_delete_order 工具"""
+
+    def _archived_customer(self):
+        from cayz_agent.integrations.crm import Customer
+
+        return Customer("C010", "小林", "linxi@xyz.com", "13600001111", "公司10", "普通", "已归档")
+
+    def _archived_order(self):
+        from cayz_agent.integrations.crm import Order
+
+        return Order("ORD-2026-001", "C001", "企业版AI助手年付", 120000.0, "已归档", "2026-01-15")
+
+    def test_delete_customer_requires_confirmation(self):
+        """彻底删除客户应先展示不可恢复的确认信息"""
+        mock_client = MagicMock()
+        mock_client.list_customers.return_value = [self._archived_customer()]
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_delete_customer.invoke({"customer_id": "C010"})
+
+        assert "不可恢复" in result
+        assert "小林" in result
+        mock_client.delete_customer.assert_not_called()
+
+    def test_delete_customer_confirmed_calls_client(self):
+        """确认后应按真实 ID 彻底删除客户"""
+        mock_client = MagicMock()
+        mock_client.list_customers.return_value = [self._archived_customer()]
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            crm_delete_customer.invoke({"customer_id": "C010", "confirmed": True})
+
+        mock_client.delete_customer.assert_called_once_with("C010")
+
+    def test_delete_customer_by_name_passes_real_id(self):
+        """按姓名删除时应传真实 ID（回归：曾误传姓名导致失败）"""
+        mock_client = MagicMock()
+        mock_client.list_customers.return_value = [self._archived_customer()]
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            crm_delete_customer.invoke({"customer_id": "小林", "confirmed": True})
+
+        mock_client.delete_customer.assert_called_once_with("C010")
+
+    def test_delete_customer_not_archived(self):
+        """未归档客户应提示无需彻底删除"""
+        from cayz_agent.integrations.crm import Customer
+
+        active = Customer("C001", "张伟", "zhangwei@example.com", "13800138001", "阿里巴巴", "VIP", "活跃")
+        mock_client = MagicMock()
+        mock_client.list_customers.return_value = [active]
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_delete_customer.invoke({"customer_id": "C001"})
+
+        assert "未归档" in result
+        assert "无需彻底删除" in result
+
+    def test_delete_customer_not_found(self):
+        """不存在的客户应提示未找到"""
+        mock_client = MagicMock()
+        mock_client.list_customers.return_value = []
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_delete_customer.invoke({"customer_id": "C999"})
+
+        assert "未找到客户" in result
+
+    def test_delete_order_confirmed_calls_client(self):
+        """确认后应按真实订单号彻底删除订单"""
+        mock_client = MagicMock()
+        mock_client.list_orders.return_value = [self._archived_order()]
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            crm_delete_order.invoke({"order_id": "ORD-2026-001", "confirmed": True})
+
+        mock_client.delete_order.assert_called_once_with("ORD-2026-001")
+
+    def test_delete_order_requires_confirmation(self):
+        """彻底删除订单应先展示不可恢复的确认信息"""
+        mock_client = MagicMock()
+        mock_client.list_orders.return_value = [self._archived_order()]
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_delete_order.invoke({"order_id": "ORD-2026-001"})
+
+        assert "不可恢复" in result
+        mock_client.delete_order.assert_not_called()
+
+    def test_delete_order_not_archived(self):
+        """未归档订单应提示无需彻底删除"""
+        from cayz_agent.integrations.crm import Order
+
+        active = Order("ORD-2026-001", "C001", "企业版AI助手年付", 120000.0, "已完成", "2026-01-15")
+        mock_client = MagicMock()
+        mock_client.list_orders.return_value = [active]
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_delete_order.invoke({"order_id": "ORD-2026-001"})
+
+        assert "无需彻底删除" in result
+
+    def test_delete_order_not_found(self):
+        """不存在的订单应提示未找到"""
+        mock_client = MagicMock()
+        mock_client.list_orders.return_value = []
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_delete_order.invoke({"order_id": "ORD-999"})
+
+        assert "未找到订单" in result
+
+    def test_delete_customer_exception_sanitized(self):
+        """彻底删除客户异常应被净化并返回错误信息"""
+        mock_client = MagicMock()
+        mock_client.list_customers.side_effect = RuntimeError("boom")
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_delete_customer.invoke({"customer_id": "C010"})
+
+        assert "彻底删除客户失败" in result
+
+    def test_delete_order_exception_sanitized(self):
+        """彻底删除订单异常应被净化并返回错误信息"""
+        mock_client = MagicMock()
+        mock_client.list_orders.side_effect = RuntimeError("boom")
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_delete_order.invoke({"order_id": "ORD-2026-001"})
+
+        assert "彻底删除订单失败" in result
+
+
+class TestCrmAddCustomer:
+    """测试 crm_add_customer 工具"""
+
+    def test_add_customer_success(self):
+        """新增客户成功应返回客户信息"""
+        from cayz_agent.integrations.crm import Customer
+
+        mock_client = MagicMock()
+        mock_client.add_customer.return_value = Customer(
+            customer_id="C010",
+            name="王强",
+            email="wangqiang@example.com",
+            phone="13800000000",
+            company="强盛科技",
+            level="VIP",
+            status="活跃",
+        )
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_add_customer.invoke(
+                {"name": "王强", "email": "wangqiang@example.com", "phone": "13800000000", "company": "强盛科技"}
+            )
+
+        assert "成功" in result
+        assert "C010" in result
+        assert "王强" in result
+        mock_client.add_customer.assert_called_once()
+
+    def test_exception_sanitized(self):
+        """异常应被捕获并脱敏"""
+        from cayz_agent.tools import crm_add_customer
+
+        mock_client = MagicMock()
+        mock_client.add_customer.side_effect = RuntimeError("sk-leaked")
+
+        with (
+            patch("cayz_agent.integrations.get_crm_client", return_value=mock_client),
+            patch("cayz_agent.tools.sanitize_exception", return_value="敏感信息已隐藏"),
+        ):
+            result = crm_add_customer.invoke(
+                {"name": "王强", "email": "w@e.com", "phone": "13800000000", "company": "强盛科技"}
+            )
+
+        assert "敏感信息已隐藏" in result or "sk-leaked" not in result
 
 
 class TestCrmAddOrder:
