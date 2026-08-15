@@ -22,6 +22,8 @@ from cayz_agent.tools import (
     crm_get_orders_by_status,
     crm_query_customer,
     crm_query_order,
+    crm_restore_customer,
+    crm_restore_order,
     crm_search_customers,
     get_current_time,
     knowledge_search,
@@ -695,6 +697,72 @@ class TestCrmGetCustomerSummary:
             result = crm_get_customer_summary.invoke({"customer_id": "C001"})
 
         assert "敏感信息已隐藏" in result or "sk-leaked" not in result
+
+
+class TestCrmRestore:
+    """测试 crm_restore_customer / crm_restore_order 工具
+
+    回归：修复前恢复工具用 get_customer/get_order 定位目标，而已归档数据被这两个方法
+    视为不存在（返回 None），导致 Agent 无法恢复已归档数据。修复后改用 list_* 定位，
+    确保已归档目标能被找到并进入确认流程。
+    """
+
+    def _archived_customer(self):
+        from cayz_agent.integrations.crm import Customer
+
+        return Customer("C010", "小林", "linxi@xyz.com", "13600001111", "公司10", "普通", "已归档")
+
+    def test_restore_customer_locates_archived(self):
+        """已归档客户应能被恢复工具定位并进入确认流程"""
+        mock_client = MagicMock()
+        mock_client.list_customers.return_value = [self._archived_customer()]
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_restore_customer.invoke({"customer_id": "C010"})
+
+        assert "未找到客户" not in result
+        assert "C010" in result
+        assert "小林" in result
+        assert "已归档" in result  # 确认信息中应展示归档状态
+
+    def test_restore_customer_confirmed_calls_client(self):
+        """用户确认后应调用客户端恢复方法"""
+        mock_client = MagicMock()
+        mock_client.list_customers.return_value = [self._archived_customer()]
+        mock_client.restore_customer.return_value = self._archived_customer()
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            crm_restore_customer.invoke({"customer_id": "C010", "confirmed": True})
+
+        mock_client.restore_customer.assert_called_once_with("C010")
+
+    def test_restore_customer_by_name_passes_real_id(self):
+        """按姓名恢复时应将解析出的真实 ID 传给客户端（回归：曾误传姓名导致失败）"""
+        mock_client = MagicMock()
+        mock_client.list_customers.return_value = [self._archived_customer()]
+        mock_client.restore_customer.return_value = self._archived_customer()
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_restore_customer.invoke({"customer_id": "小林", "confirmed": True})
+
+        # 必须传真实 ID（C010），而非姓名（小林）
+        mock_client.restore_customer.assert_called_once_with("C010")
+        assert "恢复" in result
+
+    def test_restore_order_locates_archived(self):
+        """已归档订单应能被恢复工具定位并进入确认流程"""
+        from cayz_agent.integrations.crm import Order
+
+        archived_order = Order("ORD-2026-001", "C001", "企业版AI助手年付", 120000.0, "已归档", "2026-01-15")
+        mock_client = MagicMock()
+        mock_client.list_orders.return_value = [archived_order]
+
+        with patch("cayz_agent.integrations.get_crm_client", return_value=mock_client):
+            result = crm_restore_order.invoke({"order_id": "ORD-2026-001"})
+
+        assert "未找到订单" not in result
+        assert "ORD-2026-001" in result
+        assert "已归档" in result
 
 
 class TestCrmAddOrder:

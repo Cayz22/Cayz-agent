@@ -14,14 +14,17 @@ import logging
 import os
 from dataclasses import dataclass
 
-from ..config import get_settings
-
 logger = logging.getLogger(__name__)
 
 # 运行时新增客户的持久化文件（JSON），解决服务重启后新增客户丢失的问题
 _PERSIST_FILE = "crm_customers.json"
 # 运行时新增订单的持久化文件（JSON），与客户持久化同理
 _ORDER_PERSIST_FILE = "crm_orders.json"
+# 软删除/归档状态：归档（软删除）时把客户/订单状态置为此值，而非物理移除
+_ARCHIVED_STATUS = "已归档"
+# 恢复时的默认状态：仅当归档前未记录原始状态（历史已归档数据）时回退使用
+_DEFAULT_CUSTOMER_STATUS = "活跃"
+_DEFAULT_ORDER_STATUS = "处理中"
 
 
 @dataclass
@@ -35,6 +38,7 @@ class Customer:
     company: str
     level: str  # VIP / 普通 / 试用
     status: str  # 活跃 / 流失 / 待跟进
+    archived_status: str = ""  # 归档前的原始状态，用于恢复（恢复后清空）
 
 
 @dataclass
@@ -47,35 +51,7 @@ class Order:
     amount: float
     status: str  # 已完成 / 处理中 / 已取消 / 已退款
     created_at: str
-
-
-# ============================================================
-# 模拟数据（生产环境替换为真实 API 调用）
-# ============================================================
-
-_MOCK_CUSTOMERS = [
-    Customer("C001", "张伟", "zhangwei@example.com", "13800138001", "阿里巴巴", "VIP", "活跃"),
-    Customer("C002", "李娜", "lina@example.com", "13800138002", "腾讯科技", "VIP", "活跃"),
-    Customer("C003", "王强", "wangqiang@example.com", "13800138003", "字节跳动", "普通", "活跃"),
-    Customer("C004", "赵敏", "zhaomin@example.com", "13800138004", "美团", "普通", "待跟进"),
-    Customer("C005", "刘洋", "liuyang@example.com", "13800138005", "京东集团", "VIP", "流失"),
-    Customer("C006", "陈静", "chenjing@example.com", "13800138006", "百度", "普通", "活跃"),
-    Customer("C007", "杨光", "yangguang@example.com", "13800138007", "网易", "试用", "待跟进"),
-    Customer("C008", "黄磊", "huanglei@example.com", "13800138008", "小米科技", "普通", "活跃"),
-]
-
-_MOCK_ORDERS = [
-    Order("ORD-2026-001", "C001", "企业版AI助手年付", 120000.00, "已完成", "2026-01-15"),
-    Order("ORD-2026-002", "C001", "API调用包(100万次)", 8000.00, "已完成", "2026-03-20"),
-    Order("ORD-2026-003", "C002", "企业版AI助手年付", 120000.00, "已完成", "2026-02-10"),
-    Order("ORD-2026-004", "C002", "定制模型训练", 50000.00, "处理中", "2026-06-01"),
-    Order("ORD-2026-005", "C003", "专业版月付", 999.00, "已完成", "2026-04-05"),
-    Order("ORD-2026-007", "C004", "专业版月付", 999.00, "处理中", "2026-06-15"),
-    Order("ORD-2026-008", "C005", "企业版AI助手年付", 120000.00, "已退款", "2026-01-20"),
-    Order("ORD-2026-009", "C006", "专业版月付", 999.00, "已完成", "2026-03-08"),
-    Order("ORD-2026-010", "C008", "API调用包(50万次)", 5000.00, "已完成", "2026-05-20"),
-    Order("ORD-2026-011", "C008", "专业版月付", 999.00, "已取消", "2026-06-02"),
-]
+    archived_status: str = ""  # 归档前的原始状态，用于恢复（恢复后清空）
 
 
 class CRMClient:
@@ -83,30 +59,17 @@ class CRMClient:
     CRM 客户端
 
     封装客户查询和订单跟踪操作。
-    生产环境中将 _MOCK_* 数据替换为真实 API 请求即可。
-
-    P2-10 修复：use_mock=False 时显式失败，避免静默返回空结果导致
-    业务 Agent 向用户回复"未找到客户"（看似正常业务结果而非系统故障）。
+    纯文件模式：客户/订单数据完全由 crm_customers.json、crm_orders.json 决定，
+    代码中不维护任何内置数据。文件缺失时以空数据启动。
     """
 
-    def __init__(self, use_mock: bool = True):
-        self.use_mock = use_mock
-        if use_mock:
-            self._customers = {c.customer_id: c for c in _MOCK_CUSTOMERS}
-            self._orders = {o.order_id: o for o in _MOCK_ORDERS}
-            # 加载历史新增客户，避免服务重启后丢失
-            self._customers.update(self._load_persisted())
-            # 加载历史新增订单，避免服务重启后丢失
-            self._orders.update(self._load_persisted_orders())
-        else:
-            # P2-10：真实 API 模式未实现时显式失败，避免静默返回空结果
-            raise NotImplementedError(
-                "CRM 真实 API 集成尚未实现。请设置 crm_use_mock=True 使用模拟数据，"
-                "或继承 CRMClient 并实现 _fetch_from_api 方法对接真实 CRM 系统。"
-            )
+    def __init__(self):
+        # 纯文件模式：直接加载持久化文件，文件为唯一数据源
+        self._customers = self._load_persisted()
+        self._orders = self._load_persisted_orders()
 
     def _load_persisted(self) -> dict:
-        """从持久化文件加载新增客户"""
+        """从持久化文件加载全部客户（纯文件模式唯一数据源）"""
         if not os.path.exists(_PERSIST_FILE):
             return {}
         try:
@@ -121,6 +84,7 @@ class CRMClient:
                     company=item["company"],
                     level=item["level"],
                     status=item["status"],
+                    archived_status=item.get("archived_status", ""),
                 )
                 for item in data
             }
@@ -129,7 +93,7 @@ class CRMClient:
             return {}
 
     def _save_persisted(self) -> None:
-        """将非内置新增客户写入持久化文件"""
+        """全量保存所有客户到 crm_customers.json，文件为唯一数据源"""
         try:
             data = [
                 {
@@ -140,9 +104,9 @@ class CRMClient:
                     "company": c.company,
                     "level": c.level,
                     "status": c.status,
+                    "archived_status": c.archived_status,
                 }
                 for c in self._customers.values()
-                if c.customer_id not in {m.customer_id for m in _MOCK_CUSTOMERS}
             ]
             with open(_PERSIST_FILE, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -150,7 +114,7 @@ class CRMClient:
             logger.warning("保存 CRM 持久化客户失败: %s", e)
 
     def _load_persisted_orders(self) -> dict:
-        """从持久化文件加载新增订单"""
+        """从持久化文件加载全部订单（纯文件模式唯一数据源）"""
         if not os.path.exists(_ORDER_PERSIST_FILE):
             return {}
         try:
@@ -164,6 +128,7 @@ class CRMClient:
                     amount=item["amount"],
                     status=item["status"],
                     created_at=item["created_at"],
+                    archived_status=item.get("archived_status", ""),
                 )
                 for item in data
             }
@@ -172,7 +137,7 @@ class CRMClient:
             return {}
 
     def _save_persisted_orders(self) -> None:
-        """将非内置新增订单写入持久化文件"""
+        """全量保存所有订单到 crm_orders.json，文件为唯一数据源"""
         try:
             data = [
                 {
@@ -182,9 +147,9 @@ class CRMClient:
                     "amount": o.amount,
                     "status": o.status,
                     "created_at": o.created_at,
+                    "archived_status": o.archived_status,
                 }
                 for o in self._orders.values()
-                if o.order_id not in {m.order_id for m in _MOCK_ORDERS}
             ]
             with open(_ORDER_PERSIST_FILE, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -192,16 +157,20 @@ class CRMClient:
             logger.warning("保存 CRM 持久化订单失败: %s", e)
 
     def get_customer(self, customer_id: str) -> Customer | None:
-        """根据客户ID查询客户信息"""
+        """根据客户ID查询客户信息。已归档客户视为删除，返回 None。"""
         logger.info("CRM 查询客户: %s", customer_id)
         customer = self._customers.get(customer_id)
         if customer is None:
             logger.info("CRM 未找到客户: %s", customer_id)
+            return None
+        if customer.status == _ARCHIVED_STATUS:
+            logger.info("CRM 客户已归档，视为不存在: %s", customer_id)
+            return None
         return customer
 
     def search_customers(self, keyword: str) -> list[Customer]:
         """
-        按关键词搜索客户（支持姓名、公司、邮箱模糊匹配）
+        按关键词搜索客户（支持姓名、公司、邮箱模糊匹配）。已归档客户不参与搜索。
         """
         keyword = keyword.lower().strip()
         if not keyword:
@@ -211,30 +180,35 @@ class CRMClient:
         results = [
             c
             for c in self._customers.values()
-            if keyword in c.name.lower() or keyword in c.company.lower() or keyword in c.email.lower()
+            if c.status != _ARCHIVED_STATUS
+            and (keyword in c.name.lower() or keyword in c.company.lower() or keyword in c.email.lower())
         ]
         logger.info("CRM 搜索完成: 找到 %d 条结果", len(results))
         return results
 
     def get_order(self, order_id: str) -> Order | None:
-        """根据订单号查询订单详情"""
+        """根据订单号查询订单详情。已归档订单视为删除，返回 None。"""
         logger.info("CRM 查询订单: %s", order_id)
         order = self._orders.get(order_id)
         if order is None:
             logger.info("CRM 未找到订单: %s", order_id)
+            return None
+        if order.status == _ARCHIVED_STATUS:
+            logger.info("CRM 订单已归档，视为不存在: %s", order_id)
+            return None
         return order
 
     def get_customer_orders(self, customer_id: str) -> list[Order]:
-        """查询某客户的所有订单"""
+        """查询某客户的所有订单（不含已归档订单）"""
         logger.info("CRM 查询客户订单: %s", customer_id)
         if customer_id not in self._customers:
             return []
-        orders = [o for o in self._orders.values() if o.customer_id == customer_id]
+        orders = [o for o in self._orders.values() if o.customer_id == customer_id and o.status != _ARCHIVED_STATUS]
         logger.info("CRM 查询完成: 客户 %s 有 %d 个订单", customer_id, len(orders))
         return orders
 
     def get_orders_by_status(self, status: str) -> list[Order]:
-        """按状态筛选订单"""
+        """按状态筛选订单。传「已归档」可查询已归档订单，传其他状态则排除已归档。"""
         status = status.strip()
         logger.info("CRM 按状态查询订单: %s", status)
         orders = [o for o in self._orders.values() if o.status == status]
@@ -309,6 +283,180 @@ class CRMClient:
         logger.info("CRM 新增订单: %s (%s, ¥%.2f)", order_id, product, amount)
         return order
 
+    def list_customers(self, keyword: str = "") -> list[Customer]:
+        """列出全部客户（含已归档）。keyword 非空时按姓名/公司/邮箱模糊过滤。"""
+        if keyword and keyword.strip():
+            return self.search_customers(keyword)
+        logger.info("CRM 列出客户: %d 条", len(self._customers))
+        return list(self._customers.values())
+
+    def list_orders(self, status: str = "") -> list[Order]:
+        """列出全部订单（含已归档）。status 非空时按状态过滤。"""
+        if status and status.strip():
+            return self.get_orders_by_status(status)
+        logger.info("CRM 列出订单: %d 条", len(self._orders))
+        return list(self._orders.values())
+
+    def update_customer(
+        self,
+        customer_id: str,
+        name: str | None = None,
+        email: str | None = None,
+        phone: str | None = None,
+        company: str | None = None,
+        level: str | None = None,
+        status: str | None = None,
+    ) -> Customer | None:
+        """编辑客户字段（仅更新传入的非 None 字段）。客户不存在返回 None。"""
+        customer = self._customers.get(customer_id)
+        if customer is None:
+            logger.warning("CRM 编辑客户失败: 客户不存在 %s", customer_id)
+            return None
+        if name is not None:
+            customer.name = str(name).strip()
+        if email is not None:
+            customer.email = str(email).strip()
+        if phone is not None:
+            customer.phone = str(phone).strip()
+        if company is not None:
+            customer.company = str(company).strip()
+        if level is not None:
+            customer.level = str(level).strip()
+        if status is not None:
+            customer.status = str(status).strip()
+        self._save_persisted()
+        logger.info("CRM 编辑客户: %s (%s)", customer_id, customer.name)
+        return customer
+
+    def update_order(
+        self,
+        order_id: str,
+        customer_id: str | None = None,
+        product: str | None = None,
+        amount: float | None = None,
+        status: str | None = None,
+        created_at: str | None = None,
+    ) -> Order | None:
+        """编辑订单字段（仅更新传入的非 None 字段）。订单不存在返回 None，目标客户不存在时返回 None。"""
+        order = self._orders.get(order_id)
+        if order is None:
+            logger.warning("CRM 编辑订单失败: 订单不存在 %s", order_id)
+            return None
+        if customer_id is not None:
+            if customer_id not in self._customers:
+                logger.warning("CRM 编辑订单失败: 目标客户不存在 %s", customer_id)
+                return None
+            order.customer_id = customer_id
+        if product is not None:
+            order.product = str(product).strip()
+        if amount is not None:
+            order.amount = float(amount)
+        if status is not None:
+            order.status = str(status).strip()
+        if created_at is not None:
+            order.created_at = str(created_at).strip()
+        self._save_persisted_orders()
+        logger.info("CRM 编辑订单: %s", order_id)
+        return order
+
+    def archive_customer(self, customer_id: str) -> Customer | None:
+        """软删除/归档客户：将状态置为「已归档」并记录归档前状态。返回更新后的客户，客户不存在返回 None。"""
+        customer = self._customers.get(customer_id)
+        if customer is None:
+            logger.warning("CRM 归档客户失败: 客户不存在 %s", customer_id)
+            return None
+        if customer.status == _ARCHIVED_STATUS:
+            logger.info("CRM 客户已是归档状态，跳过: %s", customer_id)
+            return customer
+        customer.archived_status = customer.status  # 记录归档前状态，供恢复使用
+        customer.status = _ARCHIVED_STATUS
+        self._save_persisted()
+        logger.info("CRM 归档客户: %s (%s)", customer_id, customer.name)
+        return customer
+
+    def restore_customer(self, customer_id: str) -> Customer | None:
+        """恢复已归档客户：还原到归档前的状态。返回更新后的客户，客户不存在返回 None。"""
+        customer = self._customers.get(customer_id)
+        if customer is None:
+            logger.warning("CRM 恢复客户失败: 客户不存在 %s", customer_id)
+            return None
+        if customer.status != _ARCHIVED_STATUS:
+            logger.info("CRM 客户未归档，无需恢复: %s", customer_id)
+            return customer
+        # 还原到归档前状态；历史数据未记录时回退到默认活跃状态
+        customer.status = customer.archived_status or _DEFAULT_CUSTOMER_STATUS
+        customer.archived_status = ""
+        self._save_persisted()
+        logger.info("CRM 恢复客户: %s (%s) -> %s", customer_id, customer.name, customer.status)
+        return customer
+
+    def archive_order(self, order_id: str) -> Order | None:
+        """软删除/归档订单：将状态置为「已归档」并记录归档前状态。返回更新后的订单，订单不存在返回 None。"""
+        order = self._orders.get(order_id)
+        if order is None:
+            logger.warning("CRM 归档订单失败: 订单不存在 %s", order_id)
+            return None
+        if order.status == _ARCHIVED_STATUS:
+            logger.info("CRM 订单已是归档状态，跳过: %s", order_id)
+            return order
+        order.archived_status = order.status  # 记录归档前状态，供恢复使用
+        order.status = _ARCHIVED_STATUS
+        self._save_persisted_orders()
+        logger.info("CRM 归档订单: %s", order_id)
+        return order
+
+    def restore_order(self, order_id: str) -> Order | None:
+        """恢复已归档订单：还原到归档前的状态。返回更新后的订单，订单不存在返回 None。"""
+        order = self._orders.get(order_id)
+        if order is None:
+            logger.warning("CRM 恢复订单失败: 订单不存在 %s", order_id)
+            return None
+        if order.status != _ARCHIVED_STATUS:
+            logger.info("CRM 订单未归档，无需恢复: %s", order_id)
+            return order
+        # 还原到归档前状态；历史数据未记录时回退到默认处理中状态
+        order.status = order.archived_status or _DEFAULT_ORDER_STATUS
+        order.archived_status = ""
+        self._save_persisted_orders()
+        logger.info("CRM 恢复订单: %s -> %s", order_id, order.status)
+        return order
+
+    def delete_customer(self, customer_id: str) -> Customer | None:
+        """彻底删除（物理删除）客户。
+
+        仅允许彻底删除已归档（软删除）的客户，防止误删活跃数据。
+        删除后从持久化文件移除，不可恢复。返回被删除的客户，客户不存在或未归档时返回 None。
+        """
+        customer = self._customers.get(customer_id)
+        if customer is None:
+            logger.warning("CRM 彻底删除客户失败: 客户不存在 %s", customer_id)
+            return None
+        if customer.status != _ARCHIVED_STATUS:
+            logger.warning("CRM 彻底删除客户失败: 仅已归档客户可彻底删除 %s（当前状态 %s）", customer_id, customer.status)
+            return None
+        del self._customers[customer_id]
+        self._save_persisted()
+        logger.info("CRM 彻底删除客户: %s (%s)", customer_id, customer.name)
+        return customer
+
+    def delete_order(self, order_id: str) -> Order | None:
+        """彻底删除（物理删除）订单。
+
+        仅允许彻底删除已归档（软删除）的订单，防止误删有效订单。
+        删除后从持久化文件移除，不可恢复。返回被删除的订单，订单不存在或未归档时返回 None。
+        """
+        order = self._orders.get(order_id)
+        if order is None:
+            logger.warning("CRM 彻底删除订单失败: 订单不存在 %s", order_id)
+            return None
+        if order.status != _ARCHIVED_STATUS:
+            logger.warning("CRM 彻底删除订单失败: 仅已归档订单可彻底删除 %s（当前状态 %s）", order_id, order.status)
+            return None
+        del self._orders[order_id]
+        self._save_persisted_orders()
+        logger.info("CRM 彻底删除订单: %s", order_id)
+        return order
+
     def get_customer_summary(self, customer_id: str) -> dict:
         """获取客户汇总信息（含订单统计）"""
         customer = self.get_customer(customer_id)
@@ -351,6 +499,5 @@ def get_crm_client() -> CRMClient:
     """获取 CRM 客户端单例"""
     global _crm_client
     if _crm_client is None:
-        settings = get_settings()
-        _crm_client = CRMClient(use_mock=settings.crm_use_mock)
+        _crm_client = CRMClient()
     return _crm_client

@@ -519,6 +519,328 @@ def crm_get_customer_summary(customer_id: str):
         return f"CRM 客户汇总查询失败: {sanitize_exception(e)}"
 
 
+# 8. 业务系统集成工具：CRM 归档（软删除）客户
+@tool
+@log_execution
+def crm_archive_customer(customer_id: str, confirmed: bool = False):
+    """
+    在 CRM 系统中归档（软删除）一个客户，将其状态置为「已归档」，数据保留可追溯但不再作为活跃客户使用。
+    归档属于破坏性操作：调用本工具前必须先向用户展示客户信息并取得明确同意，
+    用户确认后以 confirmed=True 再次调用本工具才真正执行归档。若 confirmed=False 仅返回待确认信息。
+
+    Args:
+        customer_id: 客户ID（如 C001、C009）
+        confirmed: 是否已获得用户明确确认（默认 False，仅返回待确认信息）
+    """
+    try:
+        from .integrations import get_crm_client
+
+        client = get_crm_client()
+        # 支持按 ID 或姓名匹配，传真实 ID 给归档方法
+        customer = next(
+            (c for c in client.list_customers() if c.customer_id == customer_id or c.name == customer_id),
+            None,
+        )
+
+        if customer is None:
+            return f"❌ 未找到客户: {customer_id}"
+
+        if customer.status == "已归档":
+            return f"ℹ️ 客户 {customer_id}（{customer.name}）已是归档状态，无需重复归档"
+
+        if not confirmed:
+            return (
+                f"⚠️ 检测到归档请求，请向用户确认以下客户信息后，用户同意时再以 confirmed=True 调用本工具执行归档：\n"
+                f"  ID: {customer.customer_id}\n"
+                f"  姓名: {customer.name}\n"
+                f"  公司: {customer.company}\n"
+                f"  等级: {customer.level}\n"
+                f"  当前状态: {customer.status}"
+            )
+
+        updated = client.archive_customer(customer.customer_id)
+        return (
+            f"✅ 客户已归档（软删除）\n"
+            f"  ID: {updated.customer_id}\n"
+            f"  姓名: {updated.name}\n"
+            f"  公司: {updated.company}\n"
+            f"  状态: {updated.status}"
+        )
+
+    except Exception as e:
+        logger.exception("CRM 归档客户失败")
+        return f"CRM 归档客户失败: {sanitize_exception(e)}"
+
+
+# 8. 业务系统集成工具：CRM 归档（软删除）订单
+@tool
+@log_execution
+def crm_archive_order(order_id: str, confirmed: bool = False):
+    """
+    在 CRM 系统中归档（软删除）一笔订单，将其状态置为「已归档」，数据保留可追溯但不再作为有效订单使用。
+    归档属于破坏性操作：调用本工具前必须先向用户展示订单信息并取得明确同意，
+    用户确认后以 confirmed=True 再次调用本工具才真正执行归档。若 confirmed=False 仅返回待确认信息。
+
+    Args:
+        order_id: 订单号（如 ORD-2026-001）
+        confirmed: 是否已获得用户明确确认（默认 False，仅返回待确认信息）
+    """
+    try:
+        from .integrations import get_crm_client
+
+        client = get_crm_client()
+        # 支持按订单号或产品名匹配，传真实订单号给归档方法
+        order = next(
+            (o for o in client.list_orders() if o.order_id == order_id or o.product == order_id),
+            None,
+        )
+
+        if order is None:
+            return f"❌ 未找到订单: {order_id}"
+
+        if order.status == "已归档":
+            return f"ℹ️ 订单 {order_id} 已是归档状态，无需重复归档"
+
+        if not confirmed:
+            return (
+                f"⚠️ 检测到归档请求，请向用户确认以下订单信息后，用户同意时再以 confirmed=True 调用本工具执行归档：\n"
+                f"  订单号: {order.order_id}\n"
+                f"  客户ID: {order.customer_id}\n"
+                f"  产品: {order.product}\n"
+                f"  金额: ¥{order.amount:.2f}\n"
+                f"  当前状态: {order.status}"
+            )
+
+        updated = client.archive_order(order.order_id)
+        return (
+            f"✅ 订单已归档（软删除）\n"
+            f"  订单号: {updated.order_id}\n"
+            f"  客户ID: {updated.customer_id}\n"
+            f"  产品: {updated.product}\n"
+            f"  状态: {updated.status}"
+        )
+
+    except Exception as e:
+        logger.exception("CRM 归档订单失败")
+        return f"CRM 归档订单失败: {sanitize_exception(e)}"
+
+
+# 8. 业务系统集成工具：CRM 恢复（取消归档）客户
+@tool
+@log_execution
+def crm_restore_customer(customer_id: str, confirmed: bool = False):
+    """
+    在 CRM 系统中恢复一个已归档（软删除）的客户，将其状态还原到归档前的状态。
+    恢复属于写操作：调用本工具前必须先向用户展示待恢复客户信息并取得明确同意，
+    用户确认后以 confirmed=True 再次调用本工具才真正执行恢复。若 confirmed=False 仅返回待确认信息。
+
+    Args:
+        customer_id: 客户ID（如 C001、C009）
+        confirmed: 是否已获得用户明确确认（默认 False，仅返回待确认信息）
+    """
+    try:
+        from .integrations import get_crm_client
+
+        client = get_crm_client()
+        # 从全部客户（含已归档）中定位目标，避免已归档客户被 get_customer 视为不存在。
+        # 支持按 ID 或姓名匹配（用户可能只提供姓名，如"恢复客户小林"）。
+        customer = next(
+            (c for c in client.list_customers() if c.customer_id == customer_id or c.name == customer_id),
+            None,
+        )
+
+        if customer is None:
+            return f"❌ 未找到客户: {customer_id}"
+
+        if customer.status != "已归档":
+            return f"ℹ️ 客户 {customer_id}（{customer.name}）当前状态为「{customer.status}」，未归档，无需恢复"
+
+        if not confirmed:
+            return (
+                f"⚠️ 检测到恢复请求，请向用户确认以下客户信息后，用户同意时再以 confirmed=True 调用本工具执行恢复：\n"
+                f"  ID: {customer.customer_id}\n"
+                f"  姓名: {customer.name}\n"
+                f"  公司: {customer.company}\n"
+                f"  当前状态: {customer.status}"
+            )
+
+        restored = client.restore_customer(customer.customer_id)
+        return (
+            f"✅ 客户已恢复\n"
+            f"  ID: {restored.customer_id}\n"
+            f"  姓名: {restored.name}\n"
+            f"  公司: {restored.company}\n"
+            f"  状态: {restored.status}"
+        )
+
+    except Exception as e:
+        logger.exception("CRM 恢复客户失败")
+        return f"CRM 恢复客户失败: {sanitize_exception(e)}"
+
+
+# 8. 业务系统集成工具：CRM 恢复（取消归档）订单
+@tool
+@log_execution
+def crm_restore_order(order_id: str, confirmed: bool = False):
+    """
+    在 CRM 系统中恢复一笔已归档（软删除）的订单，将其状态还原到归档前的状态。
+    恢复属于写操作：调用本工具前必须先向用户展示待恢复订单信息并取得明确同意，
+    用户确认后以 confirmed=True 再次调用本工具才真正执行恢复。若 confirmed=False 仅返回待确认信息。
+
+    Args:
+        order_id: 订单号（如 ORD-2026-001）
+        confirmed: 是否已获得用户明确确认（默认 False，仅返回待确认信息）
+    """
+    try:
+        from .integrations import get_crm_client
+
+        client = get_crm_client()
+        # 从全部订单（含已归档）中定位目标，避免已归档订单被 get_order 视为不存在。
+        # 支持按订单号或产品名匹配（用户可能提供产品名，如"恢复企业版AI助手年付订单"）。
+        order = next(
+            (o for o in client.list_orders() if o.order_id == order_id or o.product == order_id),
+            None,
+        )
+
+        if order is None:
+            return f"❌ 未找到订单: {order_id}"
+
+        if order.status != "已归档":
+            return f"ℹ️ 订单 {order_id} 当前状态为「{order.status}」，未归档，无需恢复"
+
+        if not confirmed:
+            return (
+                f"⚠️ 检测到恢复请求，请向用户确认以下订单信息后，用户同意时再以 confirmed=True 调用本工具执行恢复：\n"
+                f"  订单号: {order.order_id}\n"
+                f"  客户ID: {order.customer_id}\n"
+                f"  产品: {order.product}\n"
+                f"  当前状态: {order.status}"
+            )
+
+        restored = client.restore_order(order.order_id)
+        return (
+            f"✅ 订单已恢复\n"
+            f"  订单号: {restored.order_id}\n"
+            f"  客户ID: {restored.customer_id}\n"
+            f"  产品: {restored.product}\n"
+            f"  状态: {restored.status}"
+        )
+
+    except Exception as e:
+        logger.exception("CRM 恢复订单失败")
+        return f"CRM 恢复订单失败: {sanitize_exception(e)}"
+
+
+# 8. 业务系统集成工具：CRM 彻底删除（物理删除）客户
+@tool
+@log_execution
+def crm_delete_customer(customer_id: str, confirmed: bool = False):
+    """
+    在 CRM 系统中彻底删除（物理删除）一个已归档的客户，将其从持久化数据中永久移除，不可恢复。
+    彻底删除属于极其危险的破坏性操作：仅允许对已归档（软删除）的客户操作，
+    调用本工具前必须先向用户展示待删除客户信息并取得明确同意，
+    用户确认后以 confirmed=True 再次调用本工具才真正执行彻底删除。若 confirmed=False 仅返回待确认信息。
+
+    Args:
+        customer_id: 客户ID（如 C001、C009）
+        confirmed: 是否已获得用户明确确认（默认 False，仅返回待确认信息）
+    """
+    try:
+        from .integrations import get_crm_client
+
+        client = get_crm_client()
+        # 从全部客户（含已归档）中定位目标，避免已归档客户被 get_customer 视为不存在。
+        # 支持按 ID 或姓名匹配，传真实 ID 给删除方法。
+        target = next(
+            (c for c in client.list_customers() if c.customer_id == customer_id or c.name == customer_id),
+            None,
+        )
+
+        if target is None:
+            return f"❌ 未找到客户: {customer_id}"
+
+        if target.status != "已归档":
+            return f"ℹ️ 客户 {customer_id}（{target.name}）当前状态为「{target.status}」，未归档，无需彻底删除"
+
+        if not confirmed:
+            return (
+                f"⚠️ 检测到彻底删除请求，此操作将永久删除该客户且不可恢复。"
+                f"请向用户确认以下客户信息后，用户明确同意时再以 confirmed=True 调用本工具执行彻底删除：\n"
+                f"  ID: {target.customer_id}\n"
+                f"  姓名: {target.name}\n"
+                f"  公司: {target.company}\n"
+                f"  等级: {target.level}\n"
+                f"  当前状态: {target.status}"
+            )
+
+        deleted = client.delete_customer(target.customer_id)
+        return (
+            f"✅ 客户已彻底删除（不可恢复）\n"
+            f"  ID: {deleted.customer_id}\n"
+            f"  姓名: {deleted.name}\n"
+            f"  公司: {deleted.company}"
+        )
+
+    except Exception as e:
+        logger.exception("CRM 彻底删除客户失败")
+        return f"CRM 彻底删除客户失败: {sanitize_exception(e)}"
+
+
+# 8. 业务系统集成工具：CRM 彻底删除（物理删除）订单
+@tool
+@log_execution
+def crm_delete_order(order_id: str, confirmed: bool = False):
+    """
+    在 CRM 系统中彻底删除（物理删除）一笔已归档的订单，将其从持久化数据中永久移除，不可恢复。
+    彻底删除属于极其危险的破坏性操作：仅允许对已归档（软删除）的订单操作，
+    调用本工具前必须先向用户展示待删除订单信息并取得明确同意，
+    用户确认后以 confirmed=True 再次调用本工具才真正执行彻底删除。若 confirmed=False 仅返回待确认信息。
+
+    Args:
+        order_id: 订单号（如 ORD-2026-001）
+        confirmed: 是否已获得用户明确确认（默认 False，仅返回待确认信息）
+    """
+    try:
+        from .integrations import get_crm_client
+
+        client = get_crm_client()
+        # 从全部订单（含已归档）中定位目标，避免已归档订单被 get_order 视为不存在。
+        # 支持按订单号或产品名匹配，传真实订单号给删除方法。
+        target = next(
+            (o for o in client.list_orders() if o.order_id == order_id or o.product == order_id),
+            None,
+        )
+
+        if target is None:
+            return f"❌ 未找到订单: {order_id}"
+
+        if target.status != "已归档":
+            return f"ℹ️ 订单 {order_id} 当前状态为「{target.status}」，未归档，无需彻底删除"
+
+        if not confirmed:
+            return (
+                f"⚠️ 检测到彻底删除请求，此操作将永久删除该订单且不可恢复。"
+                f"请向用户确认以下订单信息后，用户明确同意时再以 confirmed=True 调用本工具执行彻底删除：\n"
+                f"  订单号: {target.order_id}\n"
+                f"  客户ID: {target.customer_id}\n"
+                f"  产品: {target.product}\n"
+                f"  金额: ¥{target.amount:.2f}\n"
+                f"  当前状态: {target.status}"
+            )
+
+        deleted = client.delete_order(target.order_id)
+        return (
+            f"✅ 订单已彻底删除（不可恢复）\n"
+            f"  订单号: {deleted.order_id}\n"
+            f"  客户ID: {deleted.customer_id}\n"
+            f"  产品: {deleted.product}"
+        )
+
+    except Exception as e:
+        logger.exception("CRM 彻底删除订单失败")
+        return f"CRM 彻底删除订单失败: {sanitize_exception(e)}"
+
+
 # 8. 业务系统集成工具：企业微信通知
 @tool
 @log_execution
@@ -2159,6 +2481,12 @@ AGENT_TOOLS = [
     crm_get_customer_summary,
     crm_add_customer,
     crm_add_order,
+    crm_archive_customer,
+    crm_archive_order,
+    crm_restore_customer,
+    crm_restore_order,
+    crm_delete_customer,
+    crm_delete_order,
     send_wecom_notification,
     send_email,
     # P3 新增工具 - 第一梯队
@@ -2215,7 +2543,20 @@ _READONLY_TOOLS = [
     unit_convert,
 ]
 _WRITE_TOOLS = _READONLY_TOOLS + [knowledge_upload, write_file, generate_qrcode, crm_add_customer, crm_add_order]
-_ADMIN_TOOLS = _WRITE_TOOLS + [send_wecom_notification, send_email]
+# 归档（软删除）/恢复/彻底删除为破坏性写操作，仅 admin 可用，故挂在 _ADMIN_TOOLS 而非 _WRITE_TOOLS
+_ADMIN_TOOLS = (
+    _WRITE_TOOLS
+    + [
+        crm_archive_customer,
+        crm_archive_order,
+        crm_restore_customer,
+        crm_restore_order,
+        crm_delete_customer,
+        crm_delete_order,
+        send_wecom_notification,
+        send_email,
+    ]
+)
 
 _TOOLS_BY_SCOPE = {
     "readonly": _READONLY_TOOLS,

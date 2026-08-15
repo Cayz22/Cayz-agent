@@ -76,8 +76,7 @@ class Settings(BaseSettings):
     rag_top_k: int = 3
 
     # ===== 业务系统集成配置 =====
-    # CRM 集成（true 使用模拟数据，false 对接真实 API）
-    crm_use_mock: bool = True
+    # CRM 数据以 JSON 文件（crm_customers.json / crm_orders.json）为唯一数据源
 
     # 企业微信 Webhook 通知
     wecom_webhook_url: str = ""

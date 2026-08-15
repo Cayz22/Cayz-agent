@@ -396,6 +396,34 @@
 
   .hidden { display: none !important; }
 
+  /* ---- CRM 管理视图 ---- */
+  .crm-view { flex: 1; display: flex; flex-direction: column; padding: 20px 24px; overflow: hidden; }
+  .crm-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+  .crm-tabs { display: flex; gap: 8px; }
+  .crm-tab { padding: 8px 18px; border: 1px solid var(--border); background: var(--bg); border-radius: var(--radius); font-size: 14px; font-family: var(--font-sans); color: var(--text); cursor: pointer; transition: all .15s; }
+  .crm-tab:hover { border-color: var(--accent); color: var(--accent); }
+  .crm-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .crm-toolbar-right { display: flex; align-items: center; gap: 8px; }
+  .crm-toolbar-right input[type="text"] { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; font-size: 14px; font-family: var(--font-sans); outline: none; width: 220px; }
+  .crm-toolbar-right input[type="text"]:focus { border-color: var(--accent); }
+  .crm-table-wrap { flex: 1; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); }
+  .crm-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .crm-table th, .crm-table td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  .crm-table thead th { position: sticky; top: 0; background: #fafaf8; font-weight: 600; color: var(--text-muted); font-size: 12px; letter-spacing: .02em; }
+  .crm-table tbody tr:hover { background: #fafaf8; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; border: 1px solid var(--border); }
+  .badge-archived { color: #b0a99a; border-color: #e0dbd0; }
+  .badge-active { color: #2f7d46; border-color: #cfe8d8; background: #f3faf5; }
+  .badge-warn { color: #b07a2f; border-color: #ecd9b8; background: #fdf7ec; }
+  .crm-actions { display: flex; gap: 6px; }
+  .crm-actions button { padding: 4px 10px; font-size: 12px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); cursor: pointer; font-family: var(--font-sans); color: var(--text); transition: all .15s; }
+  .crm-actions button:hover { border-color: var(--accent); color: var(--accent); }
+  .crm-actions button.danger:hover { border-color: #c0392b; color: #c0392b; }
+  .crm-form-field { margin-bottom: 12px; }
+  .crm-form-field label { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 4px; }
+  .crm-form-field input, .crm-form-field select { width: 100%; border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; font-size: 14px; font-family: var(--font-sans); outline: none; }
+  .crm-form-field input:focus, .crm-form-field select:focus { border-color: var(--accent); }
+
   /* Scrollbar */
   ::-webkit-scrollbar { width: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
@@ -426,6 +454,9 @@
       <button class="btn-sm" onclick="showDocsModal()">文档管理</button>
     </div>
   </div>
+  <div class="sidebar-section">
+    <button class="btn-new-chat" onclick="openCrmView()">客户管理</button>
+  </div>
 </aside>
 
 <!-- Main -->
@@ -435,6 +466,27 @@
       <button class="toggle-sidebar" onclick="toggleSidebar()" title="切换侧边栏">☰</button>
       <span class="status-dot" id="statusDot"></span>
       <span class="status-text" id="statusText">检测中...</span>
+    </div>
+  </div>
+  <!-- CRM 管理视图 -->
+  <div class="crm-view hidden" id="crmView">
+    <div class="crm-header">
+      <div class="crm-tabs">
+        <button class="crm-tab active" id="tabCustomers" onclick="switchCrmTab('customers')">客户管理</button>
+        <button class="crm-tab" id="tabOrders" onclick="switchCrmTab('orders')">订单管理</button>
+      </div>
+      <div class="crm-toolbar-right">
+        <input type="text" id="crmSearch" placeholder="搜索客户..." onkeydown="if(event.key==='Enter')loadCrmList()">
+        <button class="btn-sm" onclick="loadCrmList()">搜索</button>
+        <button class="btn-confirm" id="crmAddBtn" onclick="openCrmModal()">新增</button>
+        <button class="btn-cancel" onclick="openChatView()">返回对话</button>
+      </div>
+    </div>
+    <div class="crm-table-wrap">
+      <table class="crm-table">
+        <thead id="crmTableHead"></thead>
+        <tbody id="crmTableBody"></tbody>
+      </table>
     </div>
   </div>
   <div class="chat-area" id="chatArea">
@@ -485,6 +537,18 @@
     <div id="docsList" style="flex:1;overflow-y:auto;font-size:13px;margin:8px 0">加载中...</div>
     <div class="modal-actions">
       <button class="btn-cancel" onclick="closeDocsModal()">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- CRM Edit/Add Modal -->
+<div class="modal-overlay hidden" id="crmModal">
+  <div class="modal" style="max-width:480px">
+    <h3 id="crmModalTitle">新增客户</h3>
+    <div id="crmModalFields"></div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeCrmModal()">取消</button>
+      <button class="btn-confirm" onclick="submitCrmModal()">保存</button>
     </div>
   </div>
 </div>
@@ -961,6 +1025,243 @@ document.getElementById('searchModal').addEventListener('click', function(e) {
 });
 document.getElementById('docsModal').addEventListener('click', function(e) {
   if (e.target === this) closeDocsModal();
+});
+
+// ---- CRM 管理视图 ----
+let crmTab = 'customers';
+let crmModalMode = 'create'; // 'create' | 'edit'
+let crmModalId = null;
+
+function openCrmView() {
+  document.getElementById('chatArea').classList.add('hidden');
+  const inputEl = document.querySelector('.input-area');
+  if (inputEl) inputEl.classList.add('hidden');
+  document.getElementById('crmView').classList.remove('hidden');
+  loadCrmList();
+}
+
+function openChatView() {
+  document.getElementById('crmView').classList.add('hidden');
+  document.getElementById('chatArea').classList.remove('hidden');
+  const inputEl = document.querySelector('.input-area');
+  if (inputEl) inputEl.classList.remove('hidden');
+}
+
+function switchCrmTab(tab) {
+  crmTab = tab;
+  document.getElementById('tabCustomers').classList.toggle('active', tab === 'customers');
+  document.getElementById('tabOrders').classList.toggle('active', tab === 'orders');
+  document.getElementById('crmSearch').placeholder = tab === 'customers' ? '搜索客户...' : '搜索订单...';
+  document.getElementById('crmAddBtn').textContent = tab === 'customers' ? '新增客户' : '新增订单';
+  loadCrmList();
+}
+
+async function crmApi(path, method, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(`${API}${path}`, opts);
+  if (!r.ok) {
+    let msg = '请求失败';
+    try { msg = (await r.json()).detail || msg; } catch (e) {}
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
+async function loadCrmList() {
+  const keyword = document.getElementById('crmSearch').value.trim();
+  const head = document.getElementById('crmTableHead');
+  const body = document.getElementById('crmTableBody');
+  try {
+    if (crmTab === 'customers') {
+      const data = await crmApi(`/crm/customers?keyword=${encodeURIComponent(keyword)}`, 'GET');
+      head.innerHTML = '<tr><th>ID</th><th>姓名</th><th>邮箱</th><th>电话</th><th>公司</th><th>等级</th><th>状态</th><th>操作</th></tr>';
+      body.innerHTML = data.customers.map(c => {
+        const archived = c.status === '已归档';
+        const badge = archived ? '<span class="badge badge-archived">已归档</span>'
+          : c.status === '活跃' ? '<span class="badge badge-active">活跃</span>'
+          : '<span class="badge badge-warn">' + escapeHtml(c.status) + '</span>';
+        const act = archived
+          ? `<button onclick="crmRestore('${c.customer_id}')">恢复</button><button class="danger" onclick="crmDelete('${c.customer_id}')">彻底删除</button>`
+          : `<button onclick="openCrmModal('edit','${c.customer_id}')">编辑</button><button class="danger" onclick="crmArchive('${c.customer_id}')">归档</button>`;
+        return `<tr>
+          <td>${escapeHtml(c.customer_id)}</td>
+          <td>${escapeHtml(c.name)}</td>
+          <td>${escapeHtml(c.email)}</td>
+          <td>${escapeHtml(c.phone)}</td>
+          <td>${escapeHtml(c.company)}</td>
+          <td>${escapeHtml(c.level)}</td>
+          <td>${badge}</td>
+          <td><div class="crm-actions">${act}</div></td>
+        </tr>`;
+      }).join('');
+    } else {
+      const data = await crmApi(`/crm/orders?status=${encodeURIComponent(keyword)}`, 'GET');
+      head.innerHTML = '<tr><th>订单号</th><th>客户ID</th><th>产品</th><th>金额</th><th>状态</th><th>日期</th><th>操作</th></tr>';
+      body.innerHTML = data.orders.map(o => {
+        const archived = o.status === '已归档';
+        const badge = archived ? '<span class="badge badge-archived">已归档</span>'
+          : o.status === '已完成' ? '<span class="badge badge-active">已完成</span>'
+          : '<span class="badge badge-warn">' + escapeHtml(o.status) + '</span>';
+        const act = archived
+          ? `<button onclick="crmRestore('${o.order_id}')">恢复</button><button class="danger" onclick="crmDelete('${o.order_id}')">彻底删除</button>`
+          : `<button onclick="openCrmModal('edit','${o.order_id}')">编辑</button><button class="danger" onclick="crmArchive('${o.order_id}')">归档</button>`;
+        return `<tr>
+          <td>${escapeHtml(o.order_id)}</td>
+          <td>${escapeHtml(o.customer_id)}</td>
+          <td>${escapeHtml(o.product)}</td>
+          <td>¥${Number(o.amount).toFixed(2)}</td>
+          <td>${badge}</td>
+          <td>${escapeHtml(o.created_at)}</td>
+          <td><div class="crm-actions">${act}</div></td>
+        </tr>`;
+      }).join('');
+    }
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="8" style="color:#c0392b">加载失败: ${escapeHtml(e.message)}</td></tr>`;
+  }
+}
+
+function crmField(label, name, value, type) {
+  const opts = { name, value, type: type || 'text' };
+  return `<div class="crm-form-field"><label>${label}</label><input type="${opts.type}" data-crm="${opts.name}" value="${escapeHtml(opts.value == null ? '' : opts.value)}"></div>`;
+}
+
+function crmSelect(label, name, value, options) {
+  const opts = options.map(o => `<option value="${o}" ${o === value ? 'selected' : ''}>${o}</option>`).join('');
+  return `<div class="crm-form-field"><label>${label}</label><select data-crm="${name}">${opts}</select></div>`;
+}
+
+function openCrmModal(mode, id) {
+  crmModalMode = mode || 'create';
+  crmModalId = id || null;
+  const fieldsEl = document.getElementById('crmModalFields');
+  const titleEl = document.getElementById('crmModalTitle');
+  if (crmTab === 'customers') {
+    if (mode === 'edit') {
+      // 从当前表数据中取客户，避免额外请求
+      const row = document.getElementById('crmTableBody').querySelector(`tr`);
+      // 简化：重新拉取该客户
+      crmApi(`/crm/customers/${id}`, 'GET').then(res => {
+        const c = res.customer;
+        titleEl.textContent = '编辑客户 ' + c.customer_id;
+        fieldsEl.innerHTML =
+          crmField('姓名', 'name', c.name) +
+          crmField('邮箱', 'email', c.email) +
+          crmField('电话', 'phone', c.phone) +
+          crmField('公司', 'company', c.company) +
+          crmSelect('等级', 'level', c.level, ['VIP', '普通', '试用']) +
+          crmSelect('状态', 'status', c.status, ['活跃', '流失', '待跟进']);
+        document.getElementById('crmModal').classList.remove('hidden');
+      }).catch(e => alert(e.message));
+      return;
+    }
+    titleEl.textContent = '新增客户';
+    fieldsEl.innerHTML =
+      crmField('姓名', 'name', '') +
+      crmField('邮箱', 'email', '') +
+      crmField('电话', 'phone', '') +
+      crmField('公司', 'company', '') +
+      crmSelect('等级', 'level', '普通', ['VIP', '普通', '试用']) +
+      crmSelect('状态', 'status', '活跃', ['活跃', '流失', '待跟进']);
+  } else {
+    if (mode === 'edit') {
+      crmApi(`/crm/orders?status=`, 'GET').then(res => {
+        const o = res.orders.find(x => x.order_id === id);
+        if (!o) { alert('未找到订单'); return; }
+        titleEl.textContent = '编辑订单 ' + o.order_id;
+        fieldsEl.innerHTML =
+          crmField('客户ID', 'customer_id', o.customer_id) +
+          crmField('产品', 'product', o.product) +
+          crmField('金额', 'amount', o.amount) +
+          crmSelect('状态', 'status', o.status, ['已完成', '处理中', '已取消', '已退款']) +
+          crmField('日期', 'created_at', o.created_at);
+        document.getElementById('crmModal').classList.remove('hidden');
+      }).catch(e => alert(e.message));
+      return;
+    }
+    titleEl.textContent = '新增订单';
+    fieldsEl.innerHTML =
+      crmField('客户ID', 'customer_id', '') +
+      crmField('产品', 'product', '') +
+      crmField('金额', 'amount', '') +
+      crmSelect('状态', 'status', '处理中', ['已完成', '处理中', '已取消', '已退款']) +
+      crmField('日期', 'created_at', new Date().toISOString().slice(0, 10));
+  }
+  document.getElementById('crmModal').classList.remove('hidden');
+}
+
+function collectCrmForm() {
+  const obj = {};
+  document.querySelectorAll('#crmModalFields [data-crm]').forEach(el => {
+    obj[el.getAttribute('data-crm')] = el.value;
+  });
+  return obj;
+}
+
+async function submitCrmModal() {
+  const data = collectCrmForm();
+  try {
+    if (crmTab === 'customers') {
+      if (crmModalMode === 'edit') {
+        await crmApi(`/crm/customers/${crmModalId}`, 'PUT', data);
+      } else {
+        await crmApi('/crm/customers', 'POST', data);
+      }
+    } else {
+      data.amount = Number(data.amount);
+      if (crmModalMode === 'edit') {
+        await crmApi(`/crm/orders/${crmModalId}`, 'PUT', data);
+      } else {
+        await crmApi('/crm/orders', 'POST', data);
+      }
+    }
+    closeCrmModal();
+    loadCrmList();
+  } catch (e) {
+    alert('保存失败: ' + e.message);
+  }
+}
+
+function closeCrmModal() {
+  document.getElementById('crmModal').classList.add('hidden');
+}
+
+async function crmArchive(id) {
+  if (!confirm('确定归档（软删除）此项？')) return;
+  try {
+    const path = crmTab === 'customers' ? `/crm/customers/${id}` : `/crm/orders/${id}`;
+    await crmApi(path, 'DELETE');
+    loadCrmList();
+  } catch (e) {
+    alert('归档失败: ' + e.message);
+  }
+}
+
+async function crmRestore(id) {
+  if (!confirm('确定恢复此项？')) return;
+  try {
+    const path = crmTab === 'customers' ? `/crm/customers/${id}/restore` : `/crm/orders/${id}/restore`;
+    await crmApi(path, 'POST');
+    loadCrmList();
+  } catch (e) {
+    alert('恢复失败: ' + e.message);
+  }
+}
+
+async function crmDelete(id) {
+  if (!confirm('确定彻底删除此项？此操作不可恢复！')) return;
+  try {
+    const path = crmTab === 'customers' ? `/crm/customers/${id}/delete` : `/crm/orders/${id}/delete`;
+    await crmApi(path, 'POST');
+    loadCrmList();
+  } catch (e) {
+    alert('彻底删除失败: ' + e.message);
+  }
+}
+
+document.getElementById('crmModal').addEventListener('click', function(e) {
+  if (e.target === this) closeCrmModal();
 });
 </script>
 </body>

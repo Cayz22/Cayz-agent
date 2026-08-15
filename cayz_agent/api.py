@@ -183,8 +183,8 @@ def _log_startup_report() -> None:
 
     # ---- 集成 ----
     logger.info(
-        "[Integration] crm_mock=%s, wecom_webhook=%s, smtp=%s:%d",
-        settings.crm_use_mock,
+        "[Integration] crm=file/%s, wecom_webhook=%s, smtp=%s:%d",
+        "crm_customers.json",
         "<configured>" if settings.wecom_webhook_url else "<empty>",
         settings.smtp_host or "<empty>",
         settings.smtp_port,
@@ -1432,6 +1432,264 @@ async def list_models():
         "embedding_model": settings.embedding_model,
         "supported_providers": list_supported_providers(),
     }
+
+
+# ---- CRM 管理端点 ----
+# 权限分级：查询=readonly，新增/编辑=write，归档/恢复=admin（破坏性操作仅管理员）
+
+
+class CustomerCreateRequest(BaseModel):
+    name: str = Field(..., max_length=100, description="客户姓名")
+    email: str = Field("", max_length=200, description="客户邮箱")
+    phone: str = Field("", max_length=50, description="客户电话")
+    company: str = Field("", max_length=200, description="所属公司")
+    level: str = Field("普通", max_length=20, description="客户等级")
+    status: str = Field("活跃", max_length=20, description="客户状态")
+
+
+class CustomerUpdateRequest(BaseModel):
+    name: str | None = Field(None, max_length=100, description="客户姓名")
+    email: str | None = Field(None, max_length=200, description="客户邮箱")
+    phone: str | None = Field(None, max_length=50, description="客户电话")
+    company: str | None = Field(None, max_length=200, description="所属公司")
+    level: str | None = Field(None, max_length=20, description="客户等级")
+    status: str | None = Field(None, max_length=20, description="客户状态")
+
+
+class OrderCreateRequest(BaseModel):
+    customer_id: str = Field(..., max_length=20, description="客户ID")
+    product: str = Field(..., max_length=200, description="产品名称")
+    amount: float = Field(..., gt=0, description="订单金额")
+    status: str = Field("处理中", max_length=20, description="订单状态")
+    created_at: str | None = Field(None, max_length=50, description="下单日期")
+
+
+class OrderUpdateRequest(BaseModel):
+    customer_id: str | None = Field(None, max_length=20, description="客户ID")
+    product: str | None = Field(None, max_length=200, description="产品名称")
+    amount: float | None = Field(None, gt=0, description="订单金额")
+    status: str | None = Field(None, max_length=20, description="订单状态")
+    created_at: str | None = Field(None, max_length=50, description="下单日期")
+
+
+@app.get("/crm/customers")
+async def list_customers(
+    keyword: str = Query("", max_length=100, description="按姓名/公司/邮箱模糊搜索"),
+    _: None = Depends(require_scope("readonly")),
+):
+    """CRM 客户列表（含已归档），支持按关键词搜索"""
+    start = time.perf_counter()
+    from .integrations import get_crm_client
+
+    items = get_crm_client().list_customers(keyword)
+    record_request(request_type="crm_customers_list", success=True, latency=time.perf_counter() - start)
+    return {"customers": items, "total": len(items)}
+
+
+@app.get("/crm/customers/{customer_id}")
+async def get_customer_detail(
+    customer_id: str,
+    _: None = Depends(require_scope("readonly")),
+):
+    """CRM 客户详情（含该客户的全部订单）"""
+    start = time.perf_counter()
+    from .integrations import get_crm_client
+
+    client = get_crm_client()
+    customer = client.get_customer(customer_id)
+    if customer is None:
+        raise HTTPException(status_code=404, detail=f"客户不存在: {customer_id}")
+    orders = client.get_customer_orders(customer_id)
+    record_request(request_type="crm_customer_get", success=True, latency=time.perf_counter() - start)
+    return {"customer": customer, "orders": orders}
+
+
+@app.post("/crm/customers")
+async def create_customer(
+    req: CustomerCreateRequest,
+    _: None = Depends(require_scope("write")),
+):
+    """CRM 新增客户"""
+    start = time.perf_counter()
+    from .integrations import get_crm_client
+
+    customer = get_crm_client().add_customer(
+        name=req.name, email=req.email, phone=req.phone,
+        company=req.company, level=req.level, status=req.status,
+    )
+    record_request(request_type="crm_customer_create", success=True, latency=time.perf_counter() - start)
+    return {"customer": customer}
+
+
+@app.put("/crm/customers/{customer_id}")
+async def update_customer(
+    customer_id: str,
+    req: CustomerUpdateRequest,
+    _: None = Depends(require_scope("write")),
+):
+    """CRM 编辑客户（仅更新传入字段）"""
+    start = time.perf_counter()
+    from .integrations import get_crm_client
+
+    customer = get_crm_client().update_customer(
+        customer_id,
+        name=req.name, email=req.email, phone=req.phone,
+        company=req.company, level=req.level, status=req.status,
+    )
+    if customer is None:
+        raise HTTPException(status_code=404, detail=f"客户不存在: {customer_id}")
+    record_request(request_type="crm_customer_update", success=True, latency=time.perf_counter() - start)
+    return {"customer": customer}
+
+
+@app.delete("/crm/customers/{customer_id}")
+async def archive_customer(
+    customer_id: str,
+    _: None = Depends(require_scope("admin")),
+):
+    """CRM 归档（软删除）客户"""
+    start = time.perf_counter()
+    from .integrations import get_crm_client
+
+    customer = get_crm_client().archive_customer(customer_id)
+    if customer is None:
+        raise HTTPException(status_code=404, detail=f"客户不存在: {customer_id}")
+    record_request(request_type="crm_customer_archive", success=True, latency=time.perf_counter() - start)
+    return {"customer": customer}
+
+
+@app.post("/crm/customers/{customer_id}/restore")
+async def restore_customer(
+    customer_id: str,
+    _: None = Depends(require_scope("admin")),
+):
+    """CRM 恢复已归档客户"""
+    start = time.perf_counter()
+    from .integrations import get_crm_client
+
+    customer = get_crm_client().restore_customer(customer_id)
+    if customer is None:
+        raise HTTPException(status_code=404, detail=f"客户不存在: {customer_id}")
+    record_request(request_type="crm_customer_restore", success=True, latency=time.perf_counter() - start)
+    return {"customer": customer}
+
+
+@app.post("/crm/customers/{customer_id}/delete")
+async def delete_customer(
+    customer_id: str,
+    _: None = Depends(require_scope("admin")),
+):
+    """CRM 彻底删除（物理删除）已归档客户，不可恢复"""
+    start = time.perf_counter()
+    from .integrations import get_crm_client
+
+    customer = get_crm_client().delete_customer(customer_id)
+    if customer is None:
+        raise HTTPException(status_code=404, detail=f"客户不存在或未归档，无法彻底删除: {customer_id}")
+    record_request(request_type="crm_customer_delete", success=True, latency=time.perf_counter() - start)
+    return {"customer": customer}
+
+
+@app.get("/crm/orders")
+async def list_orders(
+    status: str = Query("", max_length=20, description="按状态过滤订单"),
+    _: None = Depends(require_scope("readonly")),
+):
+    """CRM 订单列表（含已归档），支持按状态过滤"""
+    start = time.perf_counter()
+    from .integrations import get_crm_client
+
+    items = get_crm_client().list_orders(status)
+    record_request(request_type="crm_orders_list", success=True, latency=time.perf_counter() - start)
+    return {"orders": items, "total": len(items)}
+
+
+@app.post("/crm/orders")
+async def create_order(
+    req: OrderCreateRequest,
+    _: None = Depends(require_scope("write")),
+):
+    """CRM 新增订单"""
+    start = time.perf_counter()
+    from .integrations import get_crm_client
+
+    order = get_crm_client().add_order(
+        customer_id=req.customer_id, product=req.product,
+        amount=req.amount, status=req.status, created_at=req.created_at,
+    )
+    if order is None:
+        raise HTTPException(status_code=404, detail=f"客户不存在: {req.customer_id}")
+    record_request(request_type="crm_order_create", success=True, latency=time.perf_counter() - start)
+    return {"order": order}
+
+
+@app.put("/crm/orders/{order_id}")
+async def update_order(
+    order_id: str,
+    req: OrderUpdateRequest,
+    _: None = Depends(require_scope("write")),
+):
+    """CRM 编辑订单（仅更新传入字段）"""
+    start = time.perf_counter()
+    from .integrations import get_crm_client
+
+    order = get_crm_client().update_order(
+        order_id,
+        customer_id=req.customer_id, product=req.product,
+        amount=req.amount, status=req.status, created_at=req.created_at,
+    )
+    if order is None:
+        raise HTTPException(status_code=404, detail=f"订单不存在或目标客户不存在: {order_id}")
+    record_request(request_type="crm_order_update", success=True, latency=time.perf_counter() - start)
+    return {"order": order}
+
+
+@app.delete("/crm/orders/{order_id}")
+async def archive_order(
+    order_id: str,
+    _: None = Depends(require_scope("admin")),
+):
+    """CRM 归档（软删除）订单"""
+    start = time.perf_counter()
+    from .integrations import get_crm_client
+
+    order = get_crm_client().archive_order(order_id)
+    if order is None:
+        raise HTTPException(status_code=404, detail=f"订单不存在: {order_id}")
+    record_request(request_type="crm_order_archive", success=True, latency=time.perf_counter() - start)
+    return {"order": order}
+
+
+@app.post("/crm/orders/{order_id}/restore")
+async def restore_order(
+    order_id: str,
+    _: None = Depends(require_scope("admin")),
+):
+    """CRM 恢复已归档订单"""
+    start = time.perf_counter()
+    from .integrations import get_crm_client
+
+    order = get_crm_client().restore_order(order_id)
+    if order is None:
+        raise HTTPException(status_code=404, detail=f"订单不存在: {order_id}")
+    record_request(request_type="crm_order_restore", success=True, latency=time.perf_counter() - start)
+    return {"order": order}
+
+
+@app.post("/crm/orders/{order_id}/delete")
+async def delete_order(
+    order_id: str,
+    _: None = Depends(require_scope("admin")),
+):
+    """CRM 彻底删除（物理删除）已归档订单，不可恢复"""
+    start = time.perf_counter()
+    from .integrations import get_crm_client
+
+    order = get_crm_client().delete_order(order_id)
+    if order is None:
+        raise HTTPException(status_code=404, detail=f"订单不存在或未归档，无法彻底删除: {order_id}")
+    record_request(request_type="crm_order_delete", success=True, latency=time.perf_counter() - start)
+    return {"order": order}
 
 
 def run():

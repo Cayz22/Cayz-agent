@@ -35,14 +35,28 @@ os.environ["FORCE_HTTPS"] = "false"
 # 全局 autouse fixture
 # ============================================================
 @pytest.fixture(autouse=True)
-def _reset_singletons():
+def _reset_singletons(temp_dir):
     """每个测试前重置配置单例 + 监控注册表 + 缓存单例，确保测试隔离。
 
     - reset_settings_cache(): 让下个测试重新读取环境变量
     - MetricsRegistry.reset(): 清空所有计数器/直方图/Gauge
     - reset_cache_singletons(): 清空 LLM/Embedding/RAG 缓存单例
     - stop_alert_watcher(): 停止 api.py 启动时拉起的后台告警线程
+    - 会话污染修复：将会话 SQLite 指向临时目录，并重置会话管理单例，
+      防止 pytest（/chat 等端点测试）写入项目根目录的真实 checkpoints.db
     """
+    # 会话污染修复：SQLite 会话库指向本次测试的临时目录，
+    # 必须在 reset_settings_cache 之前设置，确保 Settings 重新读取到临时路径。
+    os.environ["SQLITE_CHECKPOINT_PATH"] = os.path.join(temp_dir, "test_checkpoints.db")
+
+    # 重置会话管理单例，使下次 get_session_manager() 用上面的临时路径重建。
+    try:
+        import cayz_agent.session as _session_mod
+
+        _session_mod._session_manager = None
+    except Exception:
+        pass
+
     # 延迟导入，避免在模块加载阶段触发 Settings 实例化
     from cayz_agent.config import reset_settings_cache
 
