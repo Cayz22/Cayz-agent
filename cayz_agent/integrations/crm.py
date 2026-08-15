@@ -432,7 +432,9 @@ class CRMClient:
             logger.warning("CRM 彻底删除客户失败: 客户不存在 %s", customer_id)
             return None
         if customer.status != _ARCHIVED_STATUS:
-            logger.warning("CRM 彻底删除客户失败: 仅已归档客户可彻底删除 %s（当前状态 %s）", customer_id, customer.status)
+            logger.warning(
+                "CRM 彻底删除客户失败: 仅已归档客户可彻底删除 %s（当前状态 %s）", customer_id, customer.status
+            )
             return None
         del self._customers[customer_id]
         self._save_persisted()

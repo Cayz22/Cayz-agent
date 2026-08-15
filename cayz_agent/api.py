@@ -1514,8 +1514,12 @@ async def create_customer(
     from .integrations import get_crm_client
 
     customer = get_crm_client().add_customer(
-        name=req.name, email=req.email, phone=req.phone,
-        company=req.company, level=req.level, status=req.status,
+        name=req.name,
+        email=req.email,
+        phone=req.phone,
+        company=req.company,
+        level=req.level,
+        status=req.status,
     )
     record_request(request_type="crm_customer_create", success=True, latency=time.perf_counter() - start)
     return {"customer": customer}
@@ -1533,8 +1537,12 @@ async def update_customer(
 
     customer = get_crm_client().update_customer(
         customer_id,
-        name=req.name, email=req.email, phone=req.phone,
-        company=req.company, level=req.level, status=req.status,
+        name=req.name,
+        email=req.email,
+        phone=req.phone,
+        company=req.company,
+        level=req.level,
+        status=req.status,
     )
     if customer is None:
         raise HTTPException(status_code=404, detail=f"客户不存在: {customer_id}")
@@ -1614,8 +1622,11 @@ async def create_order(
     from .integrations import get_crm_client
 
     order = get_crm_client().add_order(
-        customer_id=req.customer_id, product=req.product,
-        amount=req.amount, status=req.status, created_at=req.created_at,
+        customer_id=req.customer_id,
+        product=req.product,
+        amount=req.amount,
+        status=req.status,
+        created_at=req.created_at,
     )
     if order is None:
         raise HTTPException(status_code=404, detail=f"客户不存在: {req.customer_id}")
@@ -1635,8 +1646,11 @@ async def update_order(
 
     order = get_crm_client().update_order(
         order_id,
-        customer_id=req.customer_id, product=req.product,
-        amount=req.amount, status=req.status, created_at=req.created_at,
+        customer_id=req.customer_id,
+        product=req.product,
+        amount=req.amount,
+        status=req.status,
+        created_at=req.created_at,
     )
     if order is None:
         raise HTTPException(status_code=404, detail=f"订单不存在或目标客户不存在: {order_id}")

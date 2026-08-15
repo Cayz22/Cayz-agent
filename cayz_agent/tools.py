@@ -2544,19 +2544,16 @@ _READONLY_TOOLS = [
 ]
 _WRITE_TOOLS = _READONLY_TOOLS + [knowledge_upload, write_file, generate_qrcode, crm_add_customer, crm_add_order]
 # 归档（软删除）/恢复/彻底删除为破坏性写操作，仅 admin 可用，故挂在 _ADMIN_TOOLS 而非 _WRITE_TOOLS
-_ADMIN_TOOLS = (
-    _WRITE_TOOLS
-    + [
-        crm_archive_customer,
-        crm_archive_order,
-        crm_restore_customer,
-        crm_restore_order,
-        crm_delete_customer,
-        crm_delete_order,
-        send_wecom_notification,
-        send_email,
-    ]
-)
+_ADMIN_TOOLS = _WRITE_TOOLS + [
+    crm_archive_customer,
+    crm_archive_order,
+    crm_restore_customer,
+    crm_restore_order,
+    crm_delete_customer,
+    crm_delete_order,
+    send_wecom_notification,
+    send_email,
+]
 
 _TOOLS_BY_SCOPE = {
     "readonly": _READONLY_TOOLS,
